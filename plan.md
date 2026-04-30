@@ -46,6 +46,7 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
 
 ### Backend
 - **NestJS** (TypeScript, DI 구조)
+- **Prisma** (ORM, 마이그레이션)
 - **PostgreSQL** + **pgvector** 확장 (대화 기록 + 벡터 저장 통합)
 - **Ollama** (로컬 임베딩 모델 서빙 — `nomic-embed-text`)
 - RAG 파이프라인은 직접 구현 (LangChain 미사용)
@@ -111,56 +112,13 @@ bubbles/
 
 ---
 
-## DB 설계
-
-### sessions
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| id | uuid | PK |
-| started_at | timestamp | 세션 시작 시각 |
-| ended_at | timestamp | 세션 종료 시각 (null이면 진행 중) |
-
-### messages
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| id | uuid | PK |
-| session_id | uuid | FK → sessions |
-| role | enum | `user` / `assistant` |
-| content | text | 메시지 내용 |
-| created_at | timestamp | |
-
-### memories
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| id | uuid | PK |
-| content | text | 임베딩 원문 |
-| embedding | vector | pgvector 임베딩 |
-| created_at | timestamp | |
-| last_accessed_at | timestamp | TTL 관리용 |
-| access_count | int | 조회 빈도 (TTL 가중치) |
-
-### keywords
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| id | uuid | PK |
-| word | text | 키워드 |
-| count | int | 누적 빈도 |
-| last_seen_at | timestamp | 최근성 계산용 |
-
-### memory_keywords (중간 테이블)
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| memory_id | uuid | FK → memories |
-| keyword_id | uuid | FK → keywords |
-
----
-
 ## 개발 단계
 
 ### Spec 1 — 기반 세팅
 - [ ] Docker Compose 구성 (postgres+pgvector, ollama, backend, frontend)
 - [ ] NestJS 프로젝트 초기화
 - [ ] Next.js 프로젝트 초기화
+- [ ] DB 설계 및 마이그레이션 (sessions, messages, memories, keywords)
 - [ ] LLM API 연동 (Claude + GPT 스위칭)
 - [ ] 기본 Chat UI
 
