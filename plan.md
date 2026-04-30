@@ -92,12 +92,12 @@ bubbles/
 ├── apps/
 │   ├── frontend/          # Next.js
 │   └── backend/           # NestJS
-├── plans/
-│   ├── phase-001.md       # Phase별 상세 계획 및 작업 기록
+├── specs/
+│   ├── spec-001.md        # Spec별 상세 계획 및 작업 기록
 │   └── ...
 ├── docker-compose.yml
 ├── .env.example
-├── research.md            # 코드베이스 현황 스냅샷 (Phase마다 업데이트)
+├── research.md            # 코드베이스 현황 스냅샷 (Spec마다 업데이트)
 ├── CLAUDE.md
 └── plan.md
 ```
@@ -108,26 +108,26 @@ bubbles/
 
 ## 개발 단계
 
-### Phase 1 — 기반 세팅
+### Spec 1 — 기반 세팅
 - [ ] Docker Compose 구성 (postgres+pgvector, ollama, backend, frontend)
 - [ ] NestJS 프로젝트 초기화
 - [ ] Next.js 프로젝트 초기화
 - [ ] LLM API 연동 (Claude + GPT 스위칭)
 - [ ] 기본 Chat UI
 
-### Phase 2 — RAG 파이프라인
+### Spec 2 — RAG 파이프라인
 - [ ] 대화 내용 임베딩 (Ollama) → pgvector 저장
 - [ ] 메시지 전송 시 관련 메모리 조회
 - [ ] 시스템 프롬프트에 기억 주입
 - [ ] 메모리 목록 UI
 
-### Phase 3 — 키워드 & 메모리 관리
+### Spec 3 — 키워드 & 메모리 관리
 - [ ] 키워드 추출 로직
 - [ ] 키워드 대시보드 UI
 - [ ] 메모리 TTL / 자동 정리
 - [ ] 메모리 수동 편집 UI
 
-### Phase 4 — 인증 & 배포 준비
+### Spec 4 — 인증 & 배포 준비
 - [ ] 인증 구현 (초기: 간단한 JWT 로그인, 추후 소셜 로그인 고려)
 - [ ] 설정 페이지 (모델 선택, API key 관리)
 - [ ] 배포 설정

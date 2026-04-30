@@ -55,15 +55,15 @@ Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
 
 ## 워크플로우
 
-각 Phase는 아래 순서를 따른다. 단계를 건너뛰지 말 것.
+각 Spec은 아래 순서를 따른다. 단계를 건너뛰지 말 것.
 
-1. **코드 리서치** — 현재 코드베이스 구조/모듈/의존관계 파악 후 `research.md` 갱신. Phase 시작 전 항상 수행
-2. **계획** — 해당 Phase의 세부 태스크, 파일 구조, API 설계, 핵심 코드 스니펫 등을 `plans/phase-NNN.md`에 작성
+1. **코드 리서치** — 현재 코드베이스 구조/모듈/의존관계 파악 후 `research.md` 갱신. Spec 시작 전 항상 수행
+2. **계획** — 해당 Spec의 세부 태스크, 파일 구조, API 설계, 핵심 코드 스니펫 등을 `specs/spec-NNN.md`에 작성
 3. **피드백 반영** — 유저가 주석/코멘트로 피드백. `/feedback`으로 반영 지시 전까지 코드 작성 금지
 4. **코드 작성** — `/apply` 호출 후에만 코드 작성
 5. **검증** — 작성된 코드 동작 확인, 이슈 발견 시 보고
 
-Phase가 너무 복잡해지면 Phase를 더 작게 쪼갠다. 필요시 특정 태스크용 `plans/task-<name>.md`를 별도로 만들 수 있다.
+Spec이 너무 복잡해지면 서브스펙으로 쪼갠다. 서브스펙 파일명은 `specs/spec-NNN-NNN.md` 형식 (예: `spec-001-001.md`은 spec-001의 첫 번째 서브스펙).
 
 ---
 
@@ -74,7 +74,7 @@ Phase가 너무 복잡해지면 Phase를 더 작게 쪼갠다. 필요시 특정 
 - `Change` — 일반적인 변경 (필드 추가 등)
 - `Fix` — 버그 수정
 - `Docs` — README 등 일반 문서 수정
-- `Agent` — CLAUDE.md, plans/, commands/ 등 에이전트 설정 변경
+- `Agent` — CLAUDE.md, specs/, commands/ 등 에이전트 설정 변경
 - `Comment` — 주석 수정
 - `Refactor` — 코드 리팩토링
 - `Setting` — 빌드, CI, 환경 설정 변경
