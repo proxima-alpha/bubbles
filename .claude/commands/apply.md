@@ -1,6 +1,7 @@
 확정된 plan을 기반으로 코드를 작성한다.
 
-- `$ARGUMENTS`가 있으면 해당 spec 대상. 다음 형식 모두 허용:
+- `$ARGUMENTS`가 있으면 해당 파일만 대상. 다음 형식 모두 허용:
+  - `plan` → `plan.md`
   - `spec-001` → `specs/spec-001.md`
   - `spec-001-002` → `specs/spec-001-002.md` (서브스펙)
   - `001` → `specs/spec-001.md`

@@ -1,6 +1,7 @@
 `plan.md` 및 `specs/*.md`의 인라인 주석 `[//]: # (...)` 을 스캔하여 피드백을 반영한다.
 
-- `$ARGUMENTS`가 있으면 해당 spec 파일만 대상. 다음 형식 모두 허용:
+- `$ARGUMENTS`가 있으면 해당 파일만 대상. 다음 형식 모두 허용:
+  - `plan` → `plan.md`
   - `spec-001` → `specs/spec-001.md`
   - `spec-001-002` → `specs/spec-001-002.md` (서브스펙)
   - `001` → `specs/spec-001.md`
