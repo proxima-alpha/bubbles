@@ -2,22 +2,27 @@
 
 ## 프로젝트 목적
 
-웹 클라이언트에서 general LLM을 연동하여 개인 상담사처럼 사용하되, RAG 시스템으로 세션 간 기억을 유지한다.
-세션은 짧게 끊어 토큰을 절약하고, 벡터 저장소가 과거 문맥을 대신 기억한다.
+웹 클라이언트에서 general LLM을 연동하여 대화창 구분 없이 항상 나를 기억하는 AI 친구처럼 사용한다.
+RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 개인화되고 직접 수정 가능하다.
 
 ---
 
 ## 핵심 기능
 
 ### 1. 대화 (Chat)
-- 새 세션 시작 시 빈 컨텍스트로 시작
-- 메시지 전송 시 RAG가 관련 과거 기억을 자동 조회하여 시스템 프롬프트에 주입
+- 하나의 연속된 대화창. 세션 구분 없이 항상 이어짐
+- 메시지 전송 시 컨텍스트 구성:
+  - **최근 N개 메시지** (시간 기반) — 대화 흐름 유지
+  - **관련 과거 메모리** (유사도 기반 RAG) — 오래된 맥락 보완
+  - 두 레이어를 합쳐 시스템 프롬프트 + messages 배열로 조립 후 LLM 호출
 - general LLM 모델 스위칭 가능 (설정에서 선택)
 
 ### 2. 메모리 시스템 (RAG)
-- 대화 중 중요한 내용은 자동으로 임베딩하여 벡터 DB에 저장
+- 모든 대화 내용을 임베딩하여 벡터 DB에 저장
 - 저장 단위: 발화 단위 or 요약 단위 (추후 결정)
-- 조회: 현재 메시지와 유사도 높은 과거 기억 top-k 반환
+- 조회: 시간(최근성) + 유사도 하이브리드로 top-k 선정 (k는 질문·응답 길이에 따라 유동)
+- 사용자별 메모리 개인화 — 다른 사용자의 메모리와 완전 분리
+- 메모리 수동 편집/삭제 가능 (투명성 보장)
 - 오래되고 조회 빈도 낮은 메모리는 자동 또는 수동 삭제
 
 ### 3. 키워드 대시보드
@@ -41,9 +46,9 @@
 
 ### Backend
 - **NestJS** (TypeScript, DI 구조)
-- **LangChain.js** (RAG 파이프라인, LLM 추상화)
 - **PostgreSQL** + **pgvector** 확장 (대화 기록 + 벡터 저장 통합)
 - **Ollama** (로컬 임베딩 모델 서빙 — `nomic-embed-text`)
+- RAG 파이프라인은 직접 구현 (LangChain 미사용)
 
 > ChromaDB 미사용: pgvector로 대체하여 Docker 서비스 수를 줄임 (별도 벡터 DB 불필요)
 
@@ -106,6 +111,50 @@ bubbles/
 
 ---
 
+## DB 설계
+
+### sessions
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | uuid | PK |
+| started_at | timestamp | 세션 시작 시각 |
+| ended_at | timestamp | 세션 종료 시각 (null이면 진행 중) |
+
+### messages
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | uuid | PK |
+| session_id | uuid | FK → sessions |
+| role | enum | `user` / `assistant` |
+| content | text | 메시지 내용 |
+| created_at | timestamp | |
+
+### memories
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | uuid | PK |
+| content | text | 임베딩 원문 |
+| embedding | vector | pgvector 임베딩 |
+| created_at | timestamp | |
+| last_accessed_at | timestamp | TTL 관리용 |
+| access_count | int | 조회 빈도 (TTL 가중치) |
+
+### keywords
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| id | uuid | PK |
+| word | text | 키워드 |
+| count | int | 누적 빈도 |
+| last_seen_at | timestamp | 최근성 계산용 |
+
+### memory_keywords (중간 테이블)
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| memory_id | uuid | FK → memories |
+| keyword_id | uuid | FK → keywords |
+
+---
+
 ## 개발 단계
 
 ### Spec 1 — 기반 세팅
@@ -134,6 +183,15 @@ bubbles/
 
 ---
 
+
+---
+
+## 용어 정의
+
+| 용어 | 정의 |
+|------|------|
+| **세션** | 하나의 연속된 대화창. 컨텍스트가 유지되는 구간. 이 앱에서는 단일 세션으로 항상 이어짐 |
+| **RAG** | Retrieval-Augmented Generation. 과거 메모리를 유사도+시간 기반으로 검색해 LLM 프롬프트에 주입하는 방식 |
 
 ---
 

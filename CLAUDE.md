@@ -16,7 +16,7 @@ Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
 - **Frontend**: Next.js 14 (App Router), Tailwind CSS, shadcn/ui, React Query, Axios
 - **Backend**: NestJS (TypeScript)
 - **LLM**: general LLM 연동 (Claude, GPT 등 스위칭 가능, 특정 제공사 종속 없음)
-- **RAG**: LangChain.js, pgvector (PostgreSQL 확장), Ollama (`nomic-embed-text`)
+- **RAG**: pgvector (PostgreSQL 확장), Ollama (`nomic-embed-text`), 직접 구현
 - **Infra**: Docker Compose
 - **구조**: `apps/frontend`, `apps/backend` 단순 폴더 모노레포
 
