@@ -162,3 +162,4 @@ bubbles/
 ## 메모
 
 - MemoryModule은 저장 단위 변경 가능성을 고려해 인터페이스로 설계할 것
+- Discord 봇 채널 추가 예정 — 별도 Spec으로 분리. 웹 완성 후 NestJS 백엔드에 Discord 봇 인터페이스만 붙이는 방식
