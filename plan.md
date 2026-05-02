@@ -12,37 +12,49 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
 ### 1. 대화 (Chat)
 - 단일 연속 대화창. 구분 없이 항상 이어짐
 - 메시지 전송 시 컨텍스트 구성:
+  - **main memory** (필수) — 압축된 전체 기억
+  - **top N knowledge memories** (유사도 기반 RAG) — 현재 대화와 관련된 세부 기억
   - **최근 메시지** (시간 기반) — 대화 흐름 유지
-  - **관련 과거 메모리** (유사도 기반 RAG) — 오래된 맥락 보완
-  - 두 레이어를 합쳐 시스템 프롬프트 + messages 배열로 조립 후 LLM 호출
-  - 각 레이어의 개수는 컨텍스트 버짓 내에서 유동적으로 결정
-- LLM 응답은 구조화된 포맷으로 반환 — 응답 텍스트 + 키워드 동시 추출
+  - 시스템 프롬프트 + messages 배열로 조립 후 LLM 호출
+- LLM 응답은 구조화된 포맷으로 반환 — 응답 텍스트
 - general LLM 모델 스위칭 가능 (설정에서 선택)
 
-### 2. 메모리 시스템 (RAG)
-- 원문 메시지는 messages 테이블에 저장
-- 스케줄러가 주기적으로 미처리 메시지를 배치 처리:
-  - 기존 memories + 미처리 messages를 LLM에 전송
-  - LLM이 이미 기억된 내용을 고려하여 새로 기억할 내용만 추출
-  - 추출된 메모리를 임베딩하여 pgvector에 저장
-  - 처리된 messages는 memorized 플래그 업데이트
-- 조회: 유사도 + 망각 점수 기반으로 컨텍스트 버짓 내에서 선정
-- 사용자별 메모리 개인화 — 다른 사용자의 메모리와 완전 분리
-- 메모리 수동 편집/삭제 가능 (투명성 보장)
-- **망각 전략 (하드 캡 + decay)**:
-  - 사용자당 최대 N개 하드 캡
-  - 망각 점수 = `access_count / (1 + 경과일수)` — 오래되고 조회 안 된 메모리일수록 낮아짐
-  - 스케줄러 실행 시 캡 초과하면 점수 낮은 것부터 삭제
+### 2. 메모리 시스템
+- 원문 메시지는 messages 테이블에 저장 (삭제 없이 영구 보관)
+- 메모리는 두 레이어로 구성:
+  - **knowledge memory** — messages에서 추출한 개별 지식 단위. 임베딩 보유, RAG 검색 대상. md import/export 가능. 망각은 옵션
+  - **main memory** — knowledge memories를 압축한 단일 텍스트. 스케줄러 실행마다 재생성
+- 스케줄러는 조건 기반으로 트리거 (매초 폴링 아님): 미처리 messages가 N개 이상 쌓이거나 마지막 처리 후 1일이 경과하면 배치 실행. N은 추후 결정:
+
+  - 미처리 messages 임베딩 → 벡터 클러스터링 (HDBSCAN, 클러스터 수 가변)
+  - 각 클러스터 ↔ 기존 knowledge memories 비교. merge 조건: `centroid similarity >= 0.8 AND 클러스터 내부 평균 similarity >= 0.7`. 미충족 시 신규 생성. merge 후 해당 knowledge memory 임베딩 재계산
+  - HDBSCAN 노이즈 포인트는 `proceeded = false` 유지, 다음 배치 시 새 미처리 messages와 합쳐서 재클러스터링
+  - merge / 생성 시 LLM으로 키워드 + 점수 산정 (클러스터 수만큼 병렬 호출)
+  - 승격 조건(`is_pinned = true OR (score > 0.9 AND sensitivity <= 0.3)`)을 만족하는 knowledge memories + 기존 main memory → LLM 1회 → main memory 재생성
+  - 클러스터에 포함된 messages는 `proceeded = true` 업데이트 + knowledge memory FK 연결. 노이즈 포인트는 `proceeded = false` 유지 (다음 배치에서 재처리)
+- 컨텍스트 구성: main memory (필수) + top N knowledge memories (유사도 기반) + 최근 messages (optional)
+- knowledge memory 수동 편집/고정(pin)/삭제 가능
+- 모든 knowledge memory 변경 시 history 적재 — 변경 주체(system: 스케줄러 자동 업데이트 / user: 직접 수정) 기록
+- **점수 산정 기준**: `0.25 * importance + 0.25 * durability + 0.20 * reusefulness + 0.20 * confirmed + 0.10 * recency - 0.30 * sensitivity_penalty - 0.30 * temporary_penalty` (각 항목은 0~1 범위, 최종 score도 0~1로 정규화)
+  - `importance`는 클러스터 크기 반영: `importance += log(cluster_size)` 후 정규화
+- **confirmed**: LLM이 단독으로 부여하는 정적 점수가 아닌 누적 계산값
+  - `0.4 * explicit_signal + 0.3 * repetition_score + 0.2 * user_action_score + 0.1 * llm_confidence_hint`
+  - `explicit_signal`: 사용자 발화의 확정성 ("~로 정했어" → 높음, "~할까?" → 낮음)
+  - `repetition_score`: 유사 memory가 반복 등장한 횟수 (vector similarity 기반)
+  - `user_action_score`: pin → 매우 높음, 직접 수정 → 높음, 삭제 → 제외
+  - `llm_confidence_hint`: knowledge memory 생성 시 LLM이 보조적으로 제공하는 신뢰도
+  - DB에 `explicit_signal`, `repetition_count`, `user_action_score`, `llm_confidence_hint`, `confirmed_score` 분리 저장. 스케줄러 실행 시 재계산
 
 ### 3. 키워드 대시보드
-- LLM 응답 포맷에서 키워드 추출 (별도 API 호출 없음)
+- knowledge memory 생성/merge 시 LLM이 추출한 키워드 사용
 - 최근성 + 빈도 기반 가중치
-- 키워드 클릭 시 관련 메모리 목록 조회
+- 키워드 클릭 시 관련 knowledge memory 목록 조회
 
-### 4. 메모리 관리
-- 저장된 메모리 목록 조회 (시간순 / 키워드별)
-- 개별 삭제, 일괄 삭제
-- 메모리 수동 편집
+### 4. 지식 관리 (Knowledge Management)
+- knowledge memory 목록 조회 (시간순 / 키워드별)
+- 개별 삭제, 일괄 삭제, 수동 편집
+- md 파일 import (중복 체크 없이 새 knowledge memory로 추가) / export
+- main memory 조회 및 수동 편집
 
 ---
 
@@ -58,7 +70,7 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
 - **Prisma** (ORM, 마이그레이션)
 - **PostgreSQL** + **pgvector** 확장 (대화 기록 + 벡터 저장 통합)
 - **Ollama** (로컬 임베딩 모델 서빙 — `nomic-embed-text`)
-- RAG 파이프라인은 직접 구현 (LangChain 미사용)
+- **Python 스크립트** (HDBSCAN 클러스터링 전용, NestJS에서 커맨드 실행으로 호출. stdin/stdout으로 데이터 교환, 파일 I/O 없음)
 
 > ChromaDB 미사용: pgvector로 대체하여 Docker 서비스 수를 줄임 (별도 벡터 DB 불필요)
 
@@ -68,6 +80,7 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
   - `backend` — NestJS
   - `db` — PostgreSQL (pgvector 확장 포함)
   - `ollama` — 로컬 임베딩 모델
+  - `clustering` — Python 컨테이너 (HDBSCAN 스크립트 실행 전용)
 - 추후 배포: Railway / Render / VPS (Docker 그대로)
 
 ---
@@ -81,17 +94,20 @@ Browser (Next.js)
 NestJS API
     ├── ChatModule
     │     ├── 메시지 수신
-    │     ├── RAG 조회 → 컨텍스트 버짓 내에서 메모리 선정
+    │     ├── memory 조회 + 최근 messages 선정 → 컨텍스트 조립
     │     ├── 시스템 프롬프트 조립 (기억 주입)
-    │     └── LLM API 호출 → { message, keywords } 반환
+    │     └── LLM API 호출 → { message } 반환
     │
     ├── MemoryModule
-    │     ├── 스케줄러: 기존 memories(list) + 미처리 messages → LLM → 새 memories 저장
-    │     ├── 망각: 캡 초과 시 점수 낮은 memories 삭제
-    │     └── 메모리 조회 / 삭제
+    │     ├── 스케줄러: 미처리 messages 임베딩 → HDBSCAN 클러스터링
+    │     ├── 스케줄러: 클러스터 ↔ knowledge memories cosine similarity 비교 → merge or 신규 생성
+    │     ├── 스케줄러: merge/생성 시 LLM으로 키워드 + 점수 산정
+    │     ├── 스케줄러: 승격 조건 만족 knowledge memories + 기존 main memory → LLM → main memory 재생성
+    │     ├── knowledge memory 조회 / 편집 / 삭제 / import / export
+    │     └── main memory 조회 / 편집
     │
     ├── KeywordModule
-    │     ├── LLM 응답에서 키워드 수신 및 저장
+    │     ├── knowledge memory 생성/merge 시 키워드 수신 및 저장
     │     └── 빈도 / 최근성 집계
     │
     └── ConfigModule
@@ -124,7 +140,7 @@ bubbles/
 ## 개발 단계
 
 ### Spec 1 — 기반 세팅
-- [ ] Docker Compose 구성 (postgres+pgvector, ollama, backend, frontend)
+- [ ] Docker Compose 구성 (postgres+pgvector, ollama, clustering, backend, frontend)
 - [ ] NestJS 프로젝트 초기화
 - [ ] Next.js 프로젝트 초기화
 - [ ] DB 설계 및 마이그레이션
@@ -133,15 +149,20 @@ bubbles/
 - [ ] 기본 Chat UI
 
 ### Spec 2 — RAG 파이프라인
-- [ ] LLM 응답 구조화 포맷 정의 (message + keywords)
-- [ ] 스케줄러 기반 메모리 추출 (미처리 messages → LLM → memories)
-- [ ] 메시지 전송 시 컨텍스트 버짓 내 메모리 조회 및 주입
-- [ ] 메모리 목록 UI
+- [ ] LLM 응답 구조화 포맷 정의 (message)
+- [ ] Ollama 임베딩 연동 (message 저장 시 embedding 생성)
+- [ ] 스케줄러: 미처리 messages 임베딩 → 벡터 클러스터링 (HDBSCAN)
+- [ ] 스케줄러: 클러스터 ↔ 기존 knowledge memories 유사도 비교 → merge or 신규 생성 + LLM으로 키워드/점수 산정
+- [ ] 스케줄러: 승격 조건 만족하는 knowledge memories + 기존 main memory → LLM → main memory 재생성
+- [ ] 컨텍스트 조립: main memory + top N knowledge memories (RAG) + 최근 messages
+- [ ] knowledge memory 목록 UI
 
-### Spec 3 — 키워드 & 메모리 관리
+### Spec 3 — 지식 관리 & 키워드
 - [ ] 키워드 대시보드 UI
-- [ ] 메모리 TTL / 자동 정리
-- [ ] 메모리 수동 편집 UI
+- [ ] knowledge memory 수동 편집 / 고정(pin) / 삭제 UI
+- [ ] main memory 조회 및 수동 편집 UI
+- [ ] md import / export
+- [ ] 망각 옵션 (score 기반 knowledge memory 자동 정리)
 
 ### Spec 4 — 배포 준비
 - [ ] 설정 페이지 (모델 선택, API key 관리)
@@ -153,13 +174,15 @@ bubbles/
 
 | 용어 | 정의 |
 |------|------|
-| **컨텍스트 버짓 (context budget)** | LLM 호출 시 messages 배열에 넣을 수 있는 총 슬롯. 최근 메시지 수 + 메모리 수가 이 안에서 유동적으로 결정됨 |
-| **메모리 (memory)** | 스케줄러가 대화에서 추출한 기억할 만한 내용. 임베딩되어 pgvector에 저장됨 |
-| **RAG** | Retrieval-Augmented Generation. 과거 메모리를 유사도+시간 기반으로 검색해 LLM 프롬프트에 주입하는 방식 |
+| **컨텍스트 버짓 (context budget)** | LLM 호출 시 messages 배열에 넣을 수 있는 총 슬롯. 최근 메시지 수가 이 안에서 결정됨 |
+| **knowledge memory** | messages에서 추출한 개별 지식 단위. 임베딩 보유, RAG 검색 대상. md import/export 가능 |
+| **main memory** | user당 1개. knowledge memories를 압축한 단일 텍스트. 항상 컨텍스트에 주입 |
+| **RAG** | Retrieval-Augmented Generation. knowledge memories를 유사도 기반으로 검색해 LLM 프롬프트에 주입하는 방식 |
+| **main memory 승격** | `is_pinned = true OR (score > 0.9 AND sensitivity <= 0.3)` 조건을 만족하는 knowledge memories를 LLM으로 합성한 결과 |
+| **망각 (forgetting)** | knowledge memory를 옵션으로 정리하는 과정. messages는 삭제 없이 영구 보관 |
 
 ---
 
 ## 메모
 
-- MemoryModule은 저장 단위 변경 가능성을 고려해 인터페이스로 설계할 것
 - Discord 봇 채널 추가 예정 — 별도 Spec으로 분리. 웹 완성 후 NestJS 백엔드에 Discord 봇 인터페이스만 붙이는 방식
