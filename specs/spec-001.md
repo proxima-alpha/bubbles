@@ -51,7 +51,7 @@ bubbles/
 
 ## 2. DB 설계
 
-### common_code_categories
+### common_code_category
 공통코드 분류. enum 대신 사용하는 코드 그룹 정의.
 
 | 컬럼 | 타입 | 비고 |
@@ -59,7 +59,7 @@ bubbles/
 | code | varchar | PK |
 | name | varchar | |
 | description | text | nullable |
-| sort_order | int | |
+| order | int | |
 | is_active | boolean | default true |
 | created_at | timestamptz | |
 
@@ -72,17 +72,17 @@ bubbles/
 | `memory_type` | 메모리 유형 |
 | `memory_history_type` | 메모리 히스토리 유형 |
 
-### common_codes
+### common_code
 공통코드. composite PK `(category_code, code)`.
 
 | 컬럼 | 타입 | 비고 |
 |------|------|------|
-| category_code | varchar | PK, FK → common_code_categories.code |
+| category_code | varchar | PK, FK → common_code_category.code |
 | code | varchar | PK |
 | name | varchar | |
 | description | text | nullable |
 | value | text | nullable |
-| sort_order | int | |
+| order | int | |
 | is_active | boolean | default true |
 | created_at | timestamptz | |
 
@@ -94,7 +94,7 @@ bubbles/
 - `memory_type`: `main` (메인 메모리), `knowledge` (지식 메모리)
 - `memory_history_type`: `created` (시스템 자동 생성), `renewed` (시스템 자동 수정), `uploaded` (이용자 수동 업로드), `modified` (이용자 수동 수정)
 
-### users
+### user
 
 | 컬럼 | 타입 | 비고 |
 |------|------|------|
@@ -105,36 +105,78 @@ bubbles/
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
 
-### license_keys
+### license_key
 
 | 컬럼 | 타입 | 비고 |
 |------|------|------|
 | id | uuid | PK |
 | key | varchar | unique |
-| user_id | uuid | FK → users (nullable) |
-| model_category | varchar | composite FK → common_codes.category_code |
-| model | varchar | composite FK → common_codes.code |
+| user_id | uuid | FK → user (nullable) |
+| model_category | varchar | composite FK → common_code.category_code |
+| model | varchar | composite FK → common_code.code |
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
 
-### messages
+### message
 
 | 컬럼 | 타입 | 비고 |
 |------|------|------|
 | id | uuid | PK |
-| user_id | uuid | FK → users (nullable) |
-| role_category | varchar | composite FK → common_codes.category_code |
-| role | varchar | composite FK → common_codes.code (`user` / `assistant`) |
+| user_id | uuid | FK → user (nullable) |
+| role_category | varchar | composite FK → common_code.category_code |
+| role | varchar | composite FK → common_code.code (`user` / `assistant`) |
 | content | text | |
-| model_category | varchar | composite FK → common_codes.category_code. user 메시지는 null |
-| model | varchar | composite FK → common_codes.code. user 메시지는 null |
+| model_category | varchar | composite FK → common_code.category_code. user 메시지는 null |
+| model | varchar | composite FK → common_code.code. user 메시지는 null |
 | embedding | vector(768) | Spec 2에서 채움. 컬럼만 생성 |
 | is_proceeded | boolean | default false. 스케줄러 처리 여부 |
+| created_at | timestamptz | |
+
+### memory
+memory_content의 그룹. self-referencing으로 버전 히스토리 관리.
+
+| 컬럼 | 타입 | 비고 |
+|------|------|------|
+| id | uuid | PK |
+| user_id | uuid | FK → user |
+| root_memory_id | uuid | FK → memory.id (nullable, 루트 본인은 null) |
+| parent_memory_id | uuid | FK → memory.id (nullable, 이전 버전 id) |
+| type_category | varchar | composite FK → common_code.category_code |
+| type | varchar | composite FK → common_code.code (`memory_type`: main / knowledge) |
+| history_type_category | varchar | composite FK → common_code.category_code (nullable) |
+| history_type | varchar | composite FK → common_code.code (`memory_history_type`. nullable, 최초 생성은 null) |
+| keywords | varchar[] | |
+| version | varchar | |
+| is_active | boolean | default true |
+| deactivated_at | timestamptz | nullable |
+| created_at | timestamptz | |
+| updated_at | timestamptz | |
+
+### memory_content
+memory의 하위 컨텐츠 청크.
+
+| 컬럼 | 타입 | 비고 |
+|------|------|------|
+| id | uuid | PK |
+| memory_id | uuid | FK → memory |
+| content | text | |
+| order | int | |
+| created_at | timestamptz | |
+
+### memory_content__message
+memory_content ↔ message junction.
+
+| 컬럼 | 타입 | 비고 |
+|------|------|------|
+| memory_content_id | uuid | PK, FK → memory_content |
+| message_id | uuid | PK, FK → message |
 | created_at | timestamptz | |
 
 ---
 
 ## 3. NestJS 모듈 구조
+
+`model` 모듈로 LLM 어댑터 추상화 (`model`은 NestJS 예약어 아님).
 
 ```
 backend/src/
@@ -246,7 +288,7 @@ OLLAMA_BASE_URL=http://ollama:11434
 
 ## 결정 사항
 
-- Ollama 임베딩 연동은 Spec 2로 미룸 — messages.embedding 컬럼만 생성
+- Ollama 임베딩 연동은 Spec 2로 미룸 — message.embedding 컬럼만 생성
 - 토론 모드 UI는 Spec 2 이후로 미룸 — LLM 인터페이스만 멀티모델 대응으로 설계
 - clustering 컨테이너는 Docker Compose에 포함하되 Spec 2까지 미사용
-- **미결**: model 버전 선택 방식 — common_codes의 `claude`/`gpt`는 provider 단위. 실제 호출 버전(claude-3-5-sonnet 등)을 공통코드로 관리할지, 환경변수/설정으로 관리할지 결정 필요
+- **미결**: model 버전 선택 방식 — common_code의 `claude`/`gpt`는 provider 단위. 실제 호출 버전(claude-3-5-sonnet 등)을 공통코드로 관리할지, 환경변수/설정으로 관리할지 결정 필요

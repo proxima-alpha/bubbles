@@ -38,6 +38,9 @@ Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
 - DTO는 `class-validator`로 유효성 검사
 - 환경변수는 `@nestjs/config`로 관리, 하드코딩 금지
 
+### Junction 테이블
+- 명명: `aaa__bbb` (더블 언더스코어로 두 테이블명 연결)
+
 ### 공통코드 (common_code_categories / common_codes)
 - enum 대신 공통코드 사용. 분류는 `common_code_categories`, 코드값은 `common_codes`로 분리
 - `common_codes` PK: composite `(category_code, code)`. `category_code` FK → `common_code_categories.code`
