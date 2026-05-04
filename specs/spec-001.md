@@ -51,24 +51,48 @@ bubbles/
 
 ## 2. DB 설계
 
-[//]: # (salt 필드 추가, sha256 salt용)
-[//]: # (password_hash -> password 로 필드명 변경)
-### common_codes
-공통코드. enum 대신 사용. recursive FK로 분류 그룹 표현.
+### common_code_categories
+공통코드 분류. enum 대신 사용하는 코드 그룹 정의.
 
 | 컬럼 | 타입 | 비고 |
 |------|------|------|
 | code | varchar | PK |
-| parent_code | varchar | FK → common_codes (nullable) |
 | name | varchar | |
+| description | text | nullable |
+| sort_order | int | |
+| is_active | boolean | default true |
 | created_at | timestamptz | |
 
-[//]: # (full name 사용, 소문자 사용, msg_role -> chat_role)
-[//]: # (model 추가 - 초기값 claude, gpt, 근데 버전은 어케선택하누)
 초기 데이터:
-- `MSG_ROLE` (name: 메시지 역할)
-  - `MSG_ROLE.USER` (name: 사용자)
-  - `MSG_ROLE.ASSISTANT` (name: AI)
+
+| code | name |
+|------|------|
+| `role` | 메시지 역할 |
+| `model` | LLM 모델 |
+| `memory_type` | 메모리 유형 |
+| `memory_history_type` | 메모리 히스토리 유형 |
+
+### common_codes
+공통코드. composite PK `(category_code, code)`.
+
+| 컬럼 | 타입 | 비고 |
+|------|------|------|
+| category_code | varchar | PK, FK → common_code_categories.code |
+| code | varchar | PK |
+| name | varchar | |
+| description | text | nullable |
+| value | text | nullable |
+| sort_order | int | |
+| is_active | boolean | default true |
+| created_at | timestamptz | |
+
+다른 테이블에서 참조 시 composite FK `(bbb_category, bbb)` → `(category_code, code)`. `_code` 접미사 생략.
+
+초기 데이터:
+- `role`: `user` (사용자), `assistant` (AI)
+- `model`: `claude` (Claude), `gpt` (GPT)
+- `memory_type`: `main` (메인 메모리), `knowledge` (지식 메모리)
+- `memory_history_type`: `created` (시스템 자동 생성), `renewed` (시스템 자동 수정), `uploaded` (이용자 수동 업로드), `modified` (이용자 수동 수정)
 
 ### users
 
@@ -79,9 +103,8 @@ bubbles/
 | password | varchar | SHA256 해시값 |
 | salt | varchar | SHA256 salt |
 | created_at | timestamptz | |
+| updated_at | timestamptz | |
 
-[//]: # (user_id nullable로 처리)
-[//]: # (role 에 공통코드 FK 로 연결, role_category 필드 추가, 공통코드 FK로 연결)
 ### license_keys
 
 | 컬럼 | 타입 | 비고 |
@@ -89,23 +112,25 @@ bubbles/
 | id | uuid | PK |
 | key | varchar | unique |
 | user_id | uuid | FK → users (nullable) |
-| type_code | varchar | FK → common_codes |
+| model_category | varchar | composite FK → common_codes.category_code |
+| model | varchar | composite FK → common_codes.code |
 | created_at | timestamptz | |
+| updated_at | timestamptz | |
 
-### memories
 ### messages
 
 | 컬럼 | 타입 | 비고 |
 |------|------|------|
 | id | uuid | PK |
 | user_id | uuid | FK → users (nullable) |
-| role_code | varchar | FK → common_codes (`MSG_ROLE.USER` / `MSG_ROLE.ASSISTANT`) |
+| role_category | varchar | composite FK → common_codes.category_code |
+| role | varchar | composite FK → common_codes.code (`user` / `assistant`) |
 | content | text | |
-| model | varchar | 응답 모델명 (e.g. `claude-3-5-sonnet-20241022`). user 메시지는 null |
+| model_category | varchar | composite FK → common_codes.category_code. user 메시지는 null |
+| model | varchar | composite FK → common_codes.code. user 메시지는 null |
 | embedding | vector(768) | Spec 2에서 채움. 컬럼만 생성 |
 | is_proceeded | boolean | default false. 스케줄러 처리 여부 |
 | created_at | timestamptz | |
-
 
 ---
 
@@ -123,9 +148,9 @@ backend/src/
 │   ├── chat.controller.ts   # POST /chat, GET /chat/history
 │   ├── chat.service.ts
 │   └── dto/
-├── llm/
-│   ├── llm.module.ts
-│   ├── llm.service.ts       # LLM 어댑터 인터페이스
+├── model/
+│   ├── model.module.ts
+│   ├── model.service.ts     # LLM 어댑터 인터페이스
 │   ├── providers/
 │   │   ├── claude.provider.ts
 │   │   └── openai.provider.ts
@@ -224,3 +249,4 @@ OLLAMA_BASE_URL=http://ollama:11434
 - Ollama 임베딩 연동은 Spec 2로 미룸 — messages.embedding 컬럼만 생성
 - 토론 모드 UI는 Spec 2 이후로 미룸 — LLM 인터페이스만 멀티모델 대응으로 설계
 - clustering 컨테이너는 Docker Compose에 포함하되 Spec 2까지 미사용
+- **미결**: model 버전 선택 방식 — common_codes의 `claude`/`gpt`는 provider 단위. 실제 호출 버전(claude-3-5-sonnet 등)을 공통코드로 관리할지, 환경변수/설정으로 관리할지 결정 필요
