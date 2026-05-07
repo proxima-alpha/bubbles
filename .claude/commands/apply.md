@@ -1,12 +1,16 @@
 확정된 plan을 기반으로 코드를 작성한다.
 
-- `$ARGUMENTS`가 있으면 해당 파일만 대상. 다음 형식 모두 허용:
-  - `plan` → `plan.md`
-  - `spec-001` → `specs/spec-001.md`
-  - `spec-001-002` → `specs/spec-001-002.md` (서브스펙)
-  - `001` → `specs/spec-001.md`
-  - `001-002` → `specs/spec-001-002.md`
-  - `1` → `specs/spec-001.md`
-- `$ARGUMENTS`가 없으면 현재 진행 중인 spec 대상
+## spec 대상 지정
+
+- `plan` → `plan.md`
+- `001` / `spec-001` / `1` → `specs/spec-001.md` 전체
+- `001/1` / `spec-001-001` / `001-001` → spec-001의 태스크 (1)
+  - `specs/spec-001-001.md` 이 있으면 해당 파일 사용
+  - 없으면 `specs/spec-001.md` 의 태스크 (1) 항목만 대상
+- 인수 없음 → 현재 진행 중인 spec 대상
+
+## 실행 규칙
+
 - 실행 전 반영되지 않은 주석 `[//]: # (...)` 이 남아있으면 먼저 `/feedback` 실행 후 진행
 - 워크플로우 4단계(코드 작성)에 해당 — 유저의 명시적 호출 없이 단독 실행 금지
+- 코드 작성 시작 전 대상 spec의 태스크 목록으로 TaskCreate 생성, 각 완료 시 TaskUpdate로 completed 처리

@@ -120,7 +120,8 @@ CRUD는 `/xxxx` 경로에서 HTTP method로 구분:
 5. **테스트** — `/test` 호출로 TDD 사이클 진행 (Red → Green → Refactor)
 6. **검증** — 전체 테스트 통과 확인, 이슈 발견 시 보고
 
-Spec이 너무 복잡해지면 서브스펙으로 쪼갠다. 서브스펙 파일명은 `specs/spec-NNN-NNN.md` 형식 (예: `spec-001-001.md`은 spec-001의 첫 번째 서브스펙).
+Spec이 너무 복잡해지면 서브스펙 파일로 쪼갠다. 서브스펙 파일명은 `specs/spec-NNN-NNN.md` 형식 (예: `spec-001-001.md`은 spec-001의 첫 번째 서브스펙).
+`/apply` 실행 시 spec 전체(`/apply 001`) 또는 특정 태스크만(`/apply 001/1`) 선택 가능.
 
 ---
 

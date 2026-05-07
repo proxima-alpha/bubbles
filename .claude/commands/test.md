@@ -1,13 +1,13 @@
 TDD — 구현 코드 작성 전 테스트를 먼저 작성하고, 이후 실행하여 통과를 확인한다.
 
-- `$ARGUMENTS`가 있으면 해당 파일만 대상. 다음 형식 모두 허용:
-  - `plan` → `plan.md`
-  - `spec-001` → `specs/spec-001.md`
-  - `spec-001-002` → `specs/spec-001-002.md` (서브스펙)
-  - `001` → `specs/spec-001.md`
-  - `001-002` → `specs/spec-001-002.md`
-  - `1` → `specs/spec-001.md`
-- `$ARGUMENTS`가 없으면 현재 진행 중인 spec 대상
+## spec 대상 지정
+
+- `plan` → `plan.md`
+- `001` / `spec-001` / `1` → `specs/spec-001.md` 전체
+- `001/1` / `spec-001-001` / `001-001` → spec-001의 태스크 (1)
+  - `specs/spec-001-001.md` 이 있으면 해당 파일 사용
+  - 없으면 `specs/spec-001.md` 의 태스크 (1) 항목만 대상
+- 인수 없음 → 현재 진행 중인 spec 대상
 
 ## 실행 순서
 
