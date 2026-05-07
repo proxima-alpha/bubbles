@@ -38,18 +38,55 @@ Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
 - DTO는 `class-validator`로 유효성 검사
 - 환경변수는 `@nestjs/config`로 관리, 하드코딩 금지
 
+### 테이블 컬럼 선언 순서
+
+PK → ID FK → Code FK → 일반 필드 → `is_xxx` boolean → `xxx_at` (추가) → `created_at` / `updated_at` / `deleted_at`
+
 ### Junction 테이블
 - 명명: `aaa__bbb` (더블 언더스코어로 두 테이블명 연결)
 
-### 공통코드 (common_code_categories / common_codes)
-- enum 대신 공통코드 사용. 분류는 `common_code_categories`, 코드값은 `common_codes`로 분리
-- `common_codes` PK: composite `(category_code, code)`. `category_code` FK → `common_code_categories.code`
+### 공통코드 (common_code_category / common_code)
+- enum 대신 공통코드 사용. 분류는 `common_code_category`, 코드값은 `common_code`로 분리
+- `common_code` PK: composite `(category_code, code)`. `category_code` FK → `common_code_category.code`
 - 컬럼 명명 규칙: `[테이블명_]변수명` 형식. 테이블에 `bbb`, `bbb_category` 쌍으로 추가. `_code` 접미사 생략
-- FK: `aaa(bbb_category, bbb)` → `common_codes(category_code, code)`
+- FK: `aaa(bbb_category, bbb)` → `common_code(category_code, code)`
 - "aaa 테이블에 공통코드 c, d 값을 가지는 bbb 추가" 요청 시:
   1. aaa 테이블에 `bbb_category varchar`, `bbb varchar` 컬럼 추가
-  2. `common_code_categories`에 `'bbb'` 시드 추가
-  3. `common_codes`에 `('bbb', 'c')`, `('bbb', 'd')` 시드 추가
+  2. `common_code_category`에 `'bbb'` 시드 추가
+  3. `common_code`에 `('bbb', 'c')`, `('bbb', 'd')` 시드 추가
+
+### REST API 규칙
+
+CRUD는 `/xxxx` 경로에서 HTTP method로 구분:
+
+| Method | 경로 | 용도 |
+|--------|------|------|
+| `GET` | `/xxxx` | 단순 목록 조회 (페이지/정렬만, 필터 없음) |
+| `POST` | `/xxxx` | 생성 |
+| `GET` | `/xxxx/:id` | 단건 조회 |
+| `PUT` | `/xxxx/:id` | 수정 |
+| `DELETE` | `/xxxx/:id` | 삭제 |
+| `POST` | `/xxxx/search` | 필터 포함 목록 조회 (body에 JSON) |
+| `GET` | `/xxxx/count` | 단순 count |
+| `POST` | `/xxxx/search/count` | 필터 포함 count (body에 JSON) |
+
+### 페이지네이션 / 필터
+
+`GET /xxxx`는 query param, `POST /xxxx/search`는 body로 동일한 파라미터 전달:
+
+- `page` — 페이지 번호 (1-based). 기본값 1
+- `perPage` — 페이지당 항목 수. 기본값 1000
+- `sortBy` — 정렬 필드 (단일). 방향은 `sort`로 지정
+- `sort` — 정렬 방향 (`ASC` / `DESC`). 기본값 `DESC`
+- `sorts` — 다중 정렬 시 사용. `sortBy`/`sort`보다 우선. 예: `[{ "field": "createdAt", "direction": "DESC" }, { "field": "name", "direction": "ASC" }]`
+- `filters` — (`POST /search` 전용) 배열. 각 요소는 `{ operator, field, value }` 또는 `{ operator: "AND"|"OR", filters: [...] }` (중첩 가능)
+
+지원 operator: `EQUALS`, `NOT_EQUALS`, `LIKE`, `LESS_THAN`, `LESS_THAN_OR_EQUALS`, `GREATER_THAN`, `GREATER_THAN_OR_EQUALS`, `IS_NULL`, `IS_NOT_NULL`, `IN`
+
+- `EQUALS`의 `field`는 콤마로 여러 필드 지정 가능 → OR 매칭. `value`가 빈 문자열이면 IS NULL 처리
+- `IN`의 `value`는 배열 (예: `"value": ["a","b","c"]`)
+- 기본 정렬 후순위: `id ASC` (id 필드 없으면 `code ASC`) 자동 추가
+- 엔티티에 없는 필드는 400 반환
 
 ### Frontend (Next.js)
 - Server Component 기본, 상태가 필요한 경우에만 Client Component

@@ -11,7 +11,7 @@
 - [ ] 1. Docker Compose 구성
 - [ ] 2. NestJS 프로젝트 초기화
 - [ ] 3. Next.js 프로젝트 초기화
-- [ ] 4. DB 설계 및 마이그레이션
+- [ ] 4. DB 설계 및 마이그레이션 (updated_at 자동 갱신 트리거 포함)
 - [ ] 5. 인증 구현 (JWT)
 - [ ] 6. LLM API 연동 (Claude + GPT, 멀티모델 구조)
 - [ ] 7. 기본 Chat UI
@@ -51,6 +51,8 @@ bubbles/
 
 ## 2. DB 설계
 
+컬럼 선언 순서: PK → ID FK → Code FK → 일반 필드 → is_xxx boolean → xxx_at (추가) → created_at / updated_at / deleted_at
+
 ### common_code_category
 공통코드 분류. enum 대신 사용하는 코드 그룹 정의.
 
@@ -68,7 +70,8 @@ bubbles/
 | code | name |
 |------|------|
 | `role` | 메시지 역할 |
-| `model` | LLM 모델 |
+| `provider` | LLM provider |
+| `model` | LLM 모델 버전 |
 | `memory_type` | 메모리 유형 |
 | `memory_history_type` | 메모리 히스토리 유형 |
 
@@ -79,6 +82,8 @@ bubbles/
 |------|------|------|
 | category_code | varchar | PK, FK → common_code_category.code |
 | code | varchar | PK |
+| parent_category_code | varchar | nullable. `(parent_category_code, parent_code)` composite FK → `common_code(category_code, code)` |
+| parent_code | varchar | nullable |
 | name | varchar | |
 | description | text | nullable |
 | value | text | nullable |
@@ -90,7 +95,8 @@ bubbles/
 
 초기 데이터:
 - `role`: `user` (사용자), `assistant` (AI)
-- `model`: `claude` (Claude), `gpt` (GPT)
+- `provider`: `claude` (Claude), `gpt` (GPT)
+- `model`: `claude-opus-4-7` (Claude Opus 4.7, parent: `provider/claude`), `gpt-4o-2024-08-06` (GPT-4o, parent: `provider/gpt`)
 - `memory_type`: `main` (메인 메모리), `knowledge` (지식 메모리)
 - `memory_history_type`: `created` (시스템 자동 생성), `renewed` (시스템 자동 수정), `uploaded` (이용자 수동 업로드), `modified` (이용자 수동 수정)
 
@@ -107,27 +113,33 @@ bubbles/
 
 ### license_key
 
+유저가 등록한 LLM provider별 API 키. provider 호출 시 해당 유저의 키를 사용. provider당 1개 — upsert로 관리.
+
 | 컬럼 | 타입 | 비고 |
 |------|------|------|
 | id | uuid | PK |
-| key | varchar | unique |
-| user_id | uuid | FK → user (nullable) |
-| model_category | varchar | composite FK → common_code.category_code |
-| model | varchar | composite FK → common_code.code |
+| user_id | uuid | FK → user |
+| provider_category | varchar | composite FK → common_code.category_code |
+| provider | varchar | composite FK → common_code.code (`claude` / `gpt`) |
+| key | varchar | |
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
+
+UNIQUE `(user_id, provider)`
 
 ### message
 
 | 컬럼 | 타입 | 비고 |
 |------|------|------|
 | id | uuid | PK |
-| user_id | uuid | FK → user (nullable) |
+| user_id | uuid | FK → user. assistant 메시지도 해당 대화를 발생시킨 user의 id |
 | role_category | varchar | composite FK → common_code.category_code |
 | role | varchar | composite FK → common_code.code (`user` / `assistant`) |
-| content | text | |
+| provider_category | varchar | composite FK → common_code.category_code. user 메시지는 null |
+| provider | varchar | composite FK → common_code.code. user 메시지는 null. 프로필 아이콘 표시용 |
 | model_category | varchar | composite FK → common_code.category_code. user 메시지는 null |
-| model | varchar | composite FK → common_code.code. user 메시지는 null |
+| model | varchar | composite FK → common_code.code (실제 호출 버전). user 메시지는 null |
+| content | text | |
 | embedding | vector(768) | Spec 2에서 채움. 컬럼만 생성 |
 | is_proceeded | boolean | default false. 스케줄러 처리 여부 |
 | created_at | timestamptz | |
@@ -146,7 +158,8 @@ memory_content의 그룹. self-referencing으로 버전 히스토리 관리.
 | history_type_category | varchar | composite FK → common_code.category_code (nullable) |
 | history_type | varchar | composite FK → common_code.code (`memory_history_type`. nullable, 최초 생성은 null) |
 | keywords | varchar[] | |
-| version | varchar | |
+| version | int | 1부터 시작. 수정(이용자/자동 모두)마다 +1 |
+| is_pinned | boolean | default false |
 | is_active | boolean | default true |
 | deactivated_at | timestamptz | nullable |
 | created_at | timestamptz | |
@@ -164,7 +177,7 @@ memory의 하위 컨텐츠 청크.
 | created_at | timestamptz | |
 
 ### memory_content__message
-memory_content ↔ message junction.
+memory_content 생성 시 근거가 된 message 그룹을 연결. memory_content가 생성될 때 함께 적재. Spec 2에서 채움.
 
 | 컬럼 | 타입 | 비고 |
 |------|------|------|
@@ -215,11 +228,10 @@ POST /auth/login      { email, password } → { accessToken }
 
 ### Chat
 ```
-POST /chat            { content, model? } → { content, model }
-GET  /chat/history                       → Message[]
+POST /chat            { content, model } → { content, provider, model }
+GET  /chat/history                      → Message[]
 ```
 
-- `model` 미전달 시 설정값 기본 모델 사용
 - 모든 Chat 엔드포인트는 JWT Bearer 인증 필요
 
 ---
@@ -235,7 +247,8 @@ interface LlmProvider {
 
 interface LlmResponse {
   content: string
-  model: string   // 실제 사용된 모델명 기록용
+  provider: string  // 예: claude
+  model: string     // 실제 호출 버전. 예: claude-opus-4-7
 }
 ```
 
@@ -261,7 +274,7 @@ frontend/src/app/
 ### Chat UI 핵심 요소
 - 메시지 목록 (스크롤)
 - 입력창 + 전송 버튼
-- 사용자 / AI 메시지 구분 표시
+- 사용자 / AI 메시지 구분 표시 (provider 프로필 아이콘 포함)
 - 모델 선택 드롭다운 (단일 모드)
 
 ---
@@ -275,11 +288,6 @@ DATABASE_URL=postgresql://bubbles:bubbles@localhost:5432/bubbles
 # JWT
 JWT_SECRET=
 
-# LLM
-LLM_DEFAULT_PROVIDER=claude   # claude | openai
-ANTHROPIC_API_KEY=
-OPENAI_API_KEY=
-
 # Ollama
 OLLAMA_BASE_URL=http://ollama:11434
 ```
@@ -291,4 +299,6 @@ OLLAMA_BASE_URL=http://ollama:11434
 - Ollama 임베딩 연동은 Spec 2로 미룸 — message.embedding 컬럼만 생성
 - 토론 모드 UI는 Spec 2 이후로 미룸 — LLM 인터페이스만 멀티모델 대응으로 설계
 - clustering 컨테이너는 Docker Compose에 포함하되 Spec 2까지 미사용
-- **미결**: model 버전 선택 방식 — common_code의 `claude`/`gpt`는 provider 단위. 실제 호출 버전(claude-3-5-sonnet 등)을 공통코드로 관리할지, 환경변수/설정으로 관리할지 결정 필요
+- `updated_at` 자동 갱신: `set_updated_at` 함수 1개 생성 후 해당 컬럼이 있는 각 테이블마다 트리거 개별 등록
+- LLM 모델 버전은 common_code(`model`)로 관리. 호출 버전은 API 응답에서 받아 `message.model`에 저장. model → parent → provider 역참조로 provider 식별
+- DB 전체 암호화(encryption at rest)는 Spec 4 배포 시 검토

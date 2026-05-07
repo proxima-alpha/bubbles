@@ -37,7 +37,7 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
   - 클러스터에 포함된 messages는 `proceeded = true` 업데이트 + knowledge memory FK 연결. 노이즈 포인트는 `proceeded = false` 유지 (다음 배치에서 재처리)
 - 컨텍스트 구성: main memory (필수) + top N knowledge memories (유사도 기반) + 최근 messages (optional)
 - knowledge memory 수동 편집/고정(pin)/삭제 가능
-- knowledge memory 삭제 시 해당 memory를 참조하는 messages의 FK(knowledge_memory_id)는 null로 초기화 — messages 자체는 영구 보관
+- knowledge memory 삭제 시 해당 memory를 참조하는 relation은 제거 — messages 자체는 영구 보관
 - 모든 knowledge memory 변경 시 history 적재 — 변경 주체(system: 스케줄러 자동 업데이트 / user: 직접 수정) 기록
 - **점수 산정 기준**: `0.25 * importance + 0.25 * durability + 0.20 * reusefulness + 0.20 * confirmed + 0.10 * recency - 0.30 * sensitivity_penalty - 0.30 * temporary_penalty` (각 항목은 0~1 범위, 최종 score도 0~1로 정규화)
   - `importance`는 클러스터 크기 반영: `importance += log(cluster_size)` 후 정규화
@@ -183,6 +183,7 @@ bubbles/
 | **main memory** | user당 1개. knowledge memories를 압축한 단일 텍스트. 항상 컨텍스트에 주입 |
 | **RAG** | Retrieval-Augmented Generation. knowledge memories를 유사도 기반으로 검색해 LLM 프롬프트에 주입하는 방식 |
 | **main memory 승격** | `is_pinned = true OR (score > 0.9 AND sensitivity <= 0.3)` 조건을 만족하는 knowledge memories를 LLM으로 합성한 결과 |
+| **license_key** | 유저가 등록한 LLM API 키. provider별로 1개씩 보유하며 해당 provider 호출 시 사용 |
 | **망각 (forgetting)** | knowledge memory를 옵션으로 정리하는 과정. messages는 삭제 없이 영구 보관 |
 
 ---
