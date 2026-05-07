@@ -8,14 +8,14 @@
 
 ## 태스크
 
-- [ ] 1. Docker Compose 구성
-- [ ] 2. NestJS 프로젝트 초기화
-- [ ] 3. Next.js 프로젝트 초기화
-- [ ] 4. DB 설계 및 마이그레이션 (updated_at 자동 갱신 트리거 포함)
-- [ ] 5. 인증 구현 (JWT)
-- [ ] 6. LLM API 연동 (Claude + GPT, 멀티모델 구조)
-- [ ] 7. 기본 Chat UI (user.model null이면 조건부로 모델 선택 화면 표시)
-- [ ] 8. Profile UI (본인 정보 변경, model 변경, API 키 변경)
+- [ ] (1) Docker Compose 구성
+- [ ] (2) NestJS 프로젝트 초기화
+- [ ] (3) Next.js 프로젝트 초기화
+- [ ] (4) DB 설계 및 마이그레이션 (updated_at 자동 갱신 트리거 포함)
+- [ ] (5) 인증 구현 (JWT)
+- [ ] (6) LLM API 연동 (Claude + GPT, 멀티모델 구조)
+- [ ] (7) 기본 Chat UI (user.model null이면 조건부로 모델 선택 화면 표시)
+- [ ] (8) Profile UI (본인 정보 변경, model 변경, API 키 변경)
 
 ---
 

@@ -144,34 +144,34 @@ bubbles/
 ## 개발 단계
 
 ### Spec 1 — 기반 세팅
-- [ ] Docker Compose 구성 (postgres+pgvector, ollama, clustering, backend, frontend)
-- [ ] NestJS 프로젝트 초기화
-- [ ] Next.js 프로젝트 초기화
-- [ ] DB 설계 및 마이그레이션
-- [ ] 인증 구현 (JWT)
-- [ ] LLM API 연동 (Claude + GPT 스위칭)
-- [ ] 기본 Chat UI (model null이면 모델 선택 화면 조건부 표시)
-- [ ] Profile UI (본인 정보 변경, model 변경, API 키 변경)
+- [ ] (1) Docker Compose 구성 (postgres+pgvector, ollama, clustering, backend, frontend)
+- [ ] (2) NestJS 프로젝트 초기화
+- [ ] (3) Next.js 프로젝트 초기화
+- [ ] (4) DB 설계 및 마이그레이션
+- [ ] (5) 인증 구현 (JWT)
+- [ ] (6) LLM API 연동 (Claude + GPT 스위칭)
+- [ ] (7) 기본 Chat UI (model null이면 모델 선택 화면 조건부 표시)
+- [ ] (8) Profile UI (본인 정보 변경, model 변경, API 키 변경)
 
 ### Spec 2 — RAG 파이프라인
-- [ ] LLM 응답 구조화 포맷 정의 (message)
-- [ ] Ollama 임베딩 연동 (message 저장 시 embedding 생성)
-- [ ] 스케줄러: 미처리 messages 임베딩 → 벡터 클러스터링 (HDBSCAN)
-- [ ] 스케줄러: 클러스터 ↔ 기존 knowledge memories 유사도 비교 → merge or 신규 생성 + LLM으로 키워드/점수 산정
-- [ ] 스케줄러: 승격 조건 만족하는 knowledge memories + 기존 main memory → LLM → main memory 재생성
-- [ ] 컨텍스트 조립: main memory + top N knowledge memories (RAG) + 최근 messages
-- [ ] knowledge memory 목록 UI
+- [ ] (1) LLM 응답 구조화 포맷 정의 (message)
+- [ ] (2) Ollama 임베딩 연동 (message 저장 시 embedding 생성)
+- [ ] (3) 스케줄러: 미처리 messages 임베딩 → 벡터 클러스터링 (HDBSCAN)
+- [ ] (4) 스케줄러: 클러스터 ↔ 기존 knowledge memories 유사도 비교 → merge or 신규 생성 + LLM으로 키워드/점수 산정
+- [ ] (5) 스케줄러: 승격 조건 만족하는 knowledge memories + 기존 main memory → LLM → main memory 재생성
+- [ ] (6) 컨텍스트 조립: main memory + top N knowledge memories (RAG) + 최근 messages
+- [ ] (7) knowledge memory 목록 UI
 
 ### Spec 3 — 지식 관리 & 키워드
-- [ ] 키워드 대시보드 UI
-- [ ] knowledge memory 수동 편집 / 고정(pin) / 삭제 UI
-- [ ] main memory 조회 및 수동 편집 UI
-- [ ] md import / export
-- [ ] 망각 옵션 (score 기반 knowledge memory 자동 정리)
+- [ ] (1) 키워드 대시보드 UI
+- [ ] (2) knowledge memory 수동 편집 / 고정(pin) / 삭제 UI
+- [ ] (3) main memory 조회 및 수동 편집 UI
+- [ ] (4) md import / export
+- [ ] (5) 망각 옵션 (score 기반 knowledge memory 자동 정리)
 
 ### Spec 4 — 배포 준비
-- [ ] 설정 페이지 (모델 선택, API key 관리)
-- [ ] 배포 설정
+- [ ] (1) 설정 페이지 (모델 선택, API key 관리)
+- [ ] (2) 배포 설정
 
 ---
 
