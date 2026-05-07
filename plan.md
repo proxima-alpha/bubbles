@@ -150,7 +150,8 @@ bubbles/
 - [ ] DB 설계 및 마이그레이션
 - [ ] 인증 구현 (JWT)
 - [ ] LLM API 연동 (Claude + GPT 스위칭)
-- [ ] 기본 Chat UI
+- [ ] 기본 Chat UI (model null이면 모델 선택 화면 조건부 표시)
+- [ ] Profile UI (본인 정보 변경, model 변경, API 키 변경)
 
 ### Spec 2 — RAG 파이프라인
 - [ ] LLM 응답 구조화 포맷 정의 (message)

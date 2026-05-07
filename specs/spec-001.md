@@ -14,7 +14,8 @@
 - [ ] 4. DB 설계 및 마이그레이션 (updated_at 자동 갱신 트리거 포함)
 - [ ] 5. 인증 구현 (JWT)
 - [ ] 6. LLM API 연동 (Claude + GPT, 멀티모델 구조)
-- [ ] 7. 기본 Chat UI
+- [ ] 7. 기본 Chat UI (user.model null이면 조건부로 모델 선택 화면 표시)
+- [ ] 8. Profile UI (본인 정보 변경, model 변경, API 키 변경)
 
 ---
 
@@ -64,6 +65,7 @@ bubbles/
 | order | int | |
 | is_active | boolean | default true |
 | created_at | timestamptz | |
+| updated_at | timestamptz | |
 
 초기 데이터:
 
@@ -90,6 +92,7 @@ bubbles/
 | order | int | |
 | is_active | boolean | default true |
 | created_at | timestamptz | |
+| updated_at | timestamptz | |
 
 다른 테이블에서 참조 시 composite FK `(bbb_category, bbb)` → `(category_code, code)`. `_code` 접미사 생략.
 
@@ -105,6 +108,8 @@ bubbles/
 | 컬럼 | 타입 | 비고 |
 |------|------|------|
 | id | uuid | PK |
+| model_category | varchar | default `'model'`. composite FK → common_code.category_code |
+| model | varchar | nullable. composite FK → common_code.code. 사용자가 선택한 LLM 모델. null이면 403 |
 | email | varchar | unique |
 | password | varchar | SHA256 해시값 |
 | salt | varchar | SHA256 salt |
@@ -119,7 +124,7 @@ bubbles/
 |------|------|------|
 | id | uuid | PK |
 | user_id | uuid | FK → user |
-| provider_category | varchar | composite FK → common_code.category_code |
+| provider_category | varchar | default `'provider'`. composite FK → common_code.category_code |
 | provider | varchar | composite FK → common_code.code (`claude` / `gpt`) |
 | key | varchar | |
 | created_at | timestamptz | |
@@ -133,12 +138,12 @@ UNIQUE `(user_id, provider)`
 |------|------|------|
 | id | uuid | PK |
 | user_id | uuid | FK → user. assistant 메시지도 해당 대화를 발생시킨 user의 id |
-| role_category | varchar | composite FK → common_code.category_code |
+| role_category | varchar | default `'role'`. composite FK → common_code.category_code |
 | role | varchar | composite FK → common_code.code (`user` / `assistant`) |
-| provider_category | varchar | composite FK → common_code.category_code. user 메시지는 null |
-| provider | varchar | composite FK → common_code.code. user 메시지는 null. 프로필 아이콘 표시용 |
-| model_category | varchar | composite FK → common_code.category_code. user 메시지는 null |
-| model | varchar | composite FK → common_code.code (실제 호출 버전). user 메시지는 null |
+| provider_category | varchar | default `'provider'`. composite FK → common_code.category_code |
+| provider | varchar | nullable. composite FK → common_code.code. user 메시지의 provider는 null. 프로필 아이콘 표시용 |
+| model_category | varchar | default `'model'`. composite FK → common_code.category_code |
+| model | varchar | nullable. composite FK → common_code.code (실제 호출 버전). user 메시지의 model은 null |
 | content | text | |
 | embedding | vector(768) | Spec 2에서 채움. 컬럼만 생성 |
 | is_proceeded | boolean | default false. 스케줄러 처리 여부 |
@@ -153,9 +158,9 @@ memory_content의 그룹. self-referencing으로 버전 히스토리 관리.
 | user_id | uuid | FK → user |
 | root_memory_id | uuid | FK → memory.id (nullable, 루트 본인은 null) |
 | parent_memory_id | uuid | FK → memory.id (nullable, 이전 버전 id) |
-| type_category | varchar | composite FK → common_code.category_code |
+| type_category | varchar | default `'memory_type'`. composite FK → common_code.category_code |
 | type | varchar | composite FK → common_code.code (`memory_type`: main / knowledge) |
-| history_type_category | varchar | composite FK → common_code.category_code (nullable) |
+| history_type_category | varchar | default `'memory_history_type'`. composite FK → common_code.category_code |
 | history_type | varchar | composite FK → common_code.code (`memory_history_type`. nullable, 최초 생성은 null) |
 | keywords | varchar[] | |
 | version | int | 1부터 시작. 수정(이용자/자동 모두)마다 +1 |
@@ -203,6 +208,11 @@ backend/src/
 │   ├── chat.controller.ts   # POST /chat, GET /chat/history
 │   ├── chat.service.ts
 │   └── dto/
+├── user/
+│   ├── user.module.ts
+│   ├── user.controller.ts   # GET /user, PUT /user, PUT /user/model, PUT /user/license-key
+│   ├── user.service.ts
+│   └── dto/
 ├── model/
 │   ├── model.module.ts
 │   ├── model.service.ts     # LLM 어댑터 인터페이스
@@ -222,35 +232,48 @@ backend/src/
 
 ### Auth
 ```
-POST /auth/register   { email, password } → { accessToken }
+POST /auth/register   { email, password, model, key } → { accessToken }
 POST /auth/login      { email, password } → { accessToken }
 ```
 
+### User
+```
+GET  /user                        → { email, model, providers: [{ provider, hasKey: boolean }] }
+PUT  /user                        { email?, password? } → { }
+PUT  /user/model                  { model } → { }
+PUT  /user/license-key            { provider, key } → { }
+```
+
+- 모든 User 엔드포인트는 JWT Bearer 인증 필요
+- `PUT /user/model`: 대상 model의 parent provider에 license_key가 없으면 403 반환
+- `PUT /user/license-key`: `(user_id, provider)` 기준 upsert
+- `GET /user`의 `providers`는 common_code `provider` 전체 목록 기준으로, 해당 유저의 license_key 보유 여부를 `hasKey`로 표시
+
 ### Chat
 ```
-POST /chat            { content, model } → { content, provider, model }
-GET  /chat/history                      → Message[]
+POST /chat            { content } → { content, provider, model }
+GET  /chat/history                 → Message[]
 ```
 
 - 모든 Chat 엔드포인트는 JWT Bearer 인증 필요
+- `user.model`이 null이면 403 반환
 
 ---
 
 ## 5. LLM 연동
 
-단일 모드 / 토론 모드 모두 지원 가능한 구조로 추상화:
+`model` 모듈에 provider별 어댑터를 두고, `ChatService`가 `ModelService`를 통해 호출하는 구조.
 
-```typescript
-interface LlmProvider {
-  chat(messages: LlmMessage[], systemPrompt: string): Promise<LlmResponse>
-}
+- `claude.provider.ts` — Anthropic SDK 사용
+- `openai.provider.ts` — OpenAI SDK 사용
+- `ModelService`가 `user.model` → parent provider 역참조 후 적절한 어댑터 선택
 
-interface LlmResponse {
-  content: string
-  provider: string  // 예: claude
-  model: string     // 실제 호출 버전. 예: claude-opus-4-7
-}
+응답 shape (`POST /chat` 반환):
 ```
+{ content: string, provider: string, model: string }
+```
+- `provider`: 호출에 사용된 provider 코드 (예: `claude`)
+- `model`: 실제 호출 버전 (예: `claude-opus-4-7`)
 
 토론 모드 (Spec 1 범위 밖, 구조만 고려):
 - 여러 provider에 동일 메시지 병렬 호출 → 응답 배열 반환
@@ -267,15 +290,27 @@ frontend/src/app/
 │   └── register/page.tsx
 ├── chat/
 │   └── page.tsx             # 메인 채팅 화면
+├── profile/
+│   └── page.tsx             # 프로필 (본인 정보 변경, model 변경, API 키 변경)
 ├── layout.tsx
 └── providers.tsx            # React Query Provider
 ```
+
+### Register UI 핵심 요소
+- 이메일 / 비밀번호 입력
+- model 선택 (common_code `model` 목록)
+- 선택한 model의 provider API 키 입력
 
 ### Chat UI 핵심 요소
 - 메시지 목록 (스크롤)
 - 입력창 + 전송 버튼
 - 사용자 / AI 메시지 구분 표시 (provider 프로필 아이콘 포함)
-- 모델 선택 드롭다운 (단일 모드)
+- `user.model`이 null인 경우 채팅창 대신 모델 선택 화면 표시
+
+### Profile UI 핵심 요소
+- 이메일 / 비밀번호 변경
+- model 변경 (license_key가 없는 provider의 model은 선택 불가)
+- provider별 API 키 등록 / 변경
 
 ---
 

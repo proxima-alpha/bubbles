@@ -55,6 +55,11 @@ PK → ID FK → Code FK → 일반 필드 → `is_xxx` boolean → `xxx_at` (�
   2. `common_code_category`에 `'bbb'` 시드 추가
   3. `common_code`에 `('bbb', 'c')`, `('bbb', 'd')` 시드 추가
 
+### 공통코드 API 응답 규칙
+
+- `_category` 필드는 API response에 포함하지 않음. code 값만 반환
+- 예: `{ role: "assistant", provider: "claude", model: "claude-opus-4-7" }` (role_category, provider_category, model_category 제외)
+
 ### REST API 규칙
 
 CRUD는 `/xxxx` 경로에서 HTTP method로 구분:
