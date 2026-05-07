@@ -232,7 +232,7 @@ backend/src/
 
 ### Auth
 ```
-POST /auth/register   { email, password, model, key } → { accessToken }
+POST /auth/register   { email, password, model, licenseKeys: [{ provider, key }] } → { accessToken }
 POST /auth/login      { email, password } → { accessToken }
 ```
 
