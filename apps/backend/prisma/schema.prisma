@@ -1,0 +1,133 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model common_code_category {
+  code        String   @id @db.VarChar
+  name        String   @db.VarChar
+  description String?  @db.Text
+  order       Int
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now()) @db.Timestamptz
+  updated_at  DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  codes common_code[]
+}
+
+model common_code {
+  category_code        String   @db.VarChar
+  code                 String   @db.VarChar
+  parent_category_code String?  @db.VarChar
+  parent_code          String?  @db.VarChar
+  name                 String   @db.VarChar
+  description          String?  @db.Text
+  value                String?  @db.Text
+  order                Int
+  is_active            Boolean  @default(true)
+  created_at           DateTime @default(now()) @db.Timestamptz
+  updated_at           DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  @@id([category_code, code])
+
+  category common_code_category @relation(fields: [category_code], references: [code])
+  parent   common_code?         @relation("common_code_parent", fields: [parent_category_code, parent_code], references: [category_code, code])
+  children common_code[]        @relation("common_code_parent")
+}
+
+model user {
+  id             String   @id @default(uuid()) @db.Uuid
+  model_category String   @default("model") @db.VarChar
+  model          String?  @db.VarChar
+  email          String   @unique @db.VarChar
+  password       String   @db.VarChar
+  salt           String   @db.VarChar
+  created_at     DateTime @default(now()) @db.Timestamptz
+  updated_at     DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  license_keys license_key[]
+  messages     message[]
+  memories     memory[]
+}
+
+model license_key {
+  id                String   @id @default(uuid()) @db.Uuid
+  user_id           String   @db.Uuid
+  provider_category String   @default("provider") @db.VarChar
+  provider          String   @db.VarChar
+  key               String   @db.VarChar
+  created_at        DateTime @default(now()) @db.Timestamptz
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  @@unique([user_id, provider])
+
+  user user @relation(fields: [user_id], references: [id])
+}
+
+model message {
+  id                String                     @id @default(uuid()) @db.Uuid
+  user_id           String                     @db.Uuid
+  role_category     String                     @default("role") @db.VarChar
+  role              String                     @db.VarChar
+  provider_category String                     @default("provider") @db.VarChar
+  provider          String?                    @db.VarChar
+  model_category    String                     @default("model") @db.VarChar
+  model             String?                    @db.VarChar
+  content           String                     @db.Text
+  embedding         Unsupported("vector(768)")?
+  is_proceeded      Boolean                    @default(false)
+  created_at        DateTime                   @default(now()) @db.Timestamptz
+
+  user                    user                      @relation(fields: [user_id], references: [id])
+  memory_content_messages memory_content__message[]
+}
+
+model memory {
+  id                    String    @id @default(uuid()) @db.Uuid
+  user_id               String    @db.Uuid
+  root_memory_id        String?   @db.Uuid
+  parent_memory_id      String?   @db.Uuid
+  type_category         String    @default("memory_type") @db.VarChar
+  type                  String    @db.VarChar
+  history_type_category String    @default("memory_history_type") @db.VarChar
+  history_type          String?   @db.VarChar
+  keywords              String[]
+  version               Int       @default(1)
+  is_pinned             Boolean   @default(false)
+  is_active             Boolean   @default(true)
+  deactivated_at        DateTime? @db.Timestamptz
+  created_at            DateTime  @default(now()) @db.Timestamptz
+  updated_at            DateTime  @default(now()) @updatedAt @db.Timestamptz
+
+  user           user     @relation(fields: [user_id], references: [id])
+  root_memory    memory?  @relation("memory_root", fields: [root_memory_id], references: [id])
+  child_memories memory[] @relation("memory_root")
+  parent_memory  memory?  @relation("memory_parent", fields: [parent_memory_id], references: [id])
+  newer_memories memory[] @relation("memory_parent")
+  contents       memory_content[]
+}
+
+model memory_content {
+  id         String   @id @default(uuid()) @db.Uuid
+  memory_id  String   @db.Uuid
+  content    String   @db.Text
+  order      Int
+  created_at DateTime @default(now()) @db.Timestamptz
+
+  memory   memory                    @relation(fields: [memory_id], references: [id])
+  messages memory_content__message[]
+}
+
+model memory_content__message {
+  memory_content_id String   @db.Uuid
+  message_id        String   @db.Uuid
+  created_at        DateTime @default(now()) @db.Timestamptz
+
+  @@id([memory_content_id, message_id])
+
+  memory_content memory_content @relation(fields: [memory_content_id], references: [id])
+  message        message        @relation(fields: [message_id], references: [id])
+}
