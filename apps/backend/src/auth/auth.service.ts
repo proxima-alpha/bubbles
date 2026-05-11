@@ -20,18 +20,7 @@ export class AuthService {
     const password = crypto.createHash('sha256').update(dto.password + salt).digest('hex');
 
     const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        password,
-        salt,
-        model: dto.model,
-        license_keys: {
-          create: dto.licenseKeys.map(lk => ({
-            provider: lk.provider,
-            key: lk.key,
-          })),
-        },
-      },
+      data: { email: dto.email, password, salt, model: dto.model },
     });
 
     const accessToken = this.jwtService.sign({ sub: user.id, email: user.email });

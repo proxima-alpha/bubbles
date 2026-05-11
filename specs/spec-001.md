@@ -8,14 +8,14 @@
 
 ## 태스크
 
-- [ ] (1) Docker Compose 구성
-- [ ] (2) NestJS 프로젝트 초기화
-- [ ] (3) Next.js 프로젝트 초기화
-- [ ] (4) DB 설계 및 마이그레이션 (updated_at 자동 갱신 트리거 포함)
-- [ ] (5) 인증 구현 (JWT)
-- [ ] (6) LLM API 연동 (Claude + GPT, 멀티모델 구조)
-- [ ] (7) 기본 Chat UI (user.model null이면 조건부로 모델 선택 화면 표시)
-- [ ] (8) Profile UI (본인 정보 변경, model 변경, API 키 변경)
+- [x] (1) Docker Compose 구성
+- [x] (2) NestJS 프로젝트 초기화
+- [x] (3) Next.js 프로젝트 초기화
+- [x] (4) DB 설계 및 마이그레이션 (updated_at 자동 갱신 트리거 포함)
+- [x] (5) 인증 구현 (JWT)
+- [x] (6) LLM 연동 (Ollama — `qwen2.5:3b`)
+- [x] (7) 기본 Chat UI (user.model null이면 조건부로 모델 선택 화면 표시)
+- [x] (8) Profile UI (본인 정보 변경, model 변경, API 키 변경)
 
 ---
 
@@ -98,8 +98,8 @@ bubbles/
 
 초기 데이터:
 - `role`: `user` (사용자), `assistant` (AI)
-- `provider`: `claude` (Claude), `gpt` (GPT)
-- `model`: `claude-opus-4-7` (Claude Opus 4.7, parent: `provider/claude`), `gpt-4o-2024-08-06` (GPT-4o, parent: `provider/gpt`)
+- `provider`: `ollama` (Ollama 로컬)
+- `model`: `qwen2.5:3b` (Qwen 2.5 3B, parent: `provider/ollama`)
 - `memory_type`: `main` (메인 메모리), `knowledge` (지식 메모리)
 - `memory_history_type`: `created` (시스템 자동 생성), `renewed` (시스템 자동 수정), `uploaded` (이용자 수동 업로드), `modified` (이용자 수동 수정)
 
@@ -217,8 +217,7 @@ backend/src/
 │   ├── model.module.ts
 │   ├── model.service.ts     # LLM 어댑터 인터페이스
 │   ├── providers/
-│   │   ├── claude.provider.ts
-│   │   └── openai.provider.ts
+│   │   └── ollama.provider.ts
 │   └── dto/
 ├── prisma/
 │   ├── prisma.module.ts
@@ -238,16 +237,13 @@ POST /auth/login      { email, password } → { accessToken }
 
 ### User
 ```
-GET  /user                        → { email, model, providers: [{ provider, hasKey: boolean }] }
-PUT  /user                        { email?, password? } → { }
-PUT  /user/model                  { model } → { }
-PUT  /user/license-key            { provider, key } → { }
+GET  /user            → { email, model }
+PUT  /user            { email?, password? } → { }
+PUT  /user/model      { model } → { }
 ```
 
 - 모든 User 엔드포인트는 JWT Bearer 인증 필요
-- `PUT /user/model`: 대상 model의 parent provider에 license_key가 없으면 403 반환
-- `PUT /user/license-key`: `(user_id, provider)` 기준 upsert
-- `GET /user`의 `providers`는 common_code `provider` 전체 목록 기준으로, 해당 유저의 license_key 보유 여부를 `hasKey`로 표시
+- `PUT /user/model`: 유효한 common_code model 값이 아니면 400 반환
 
 ### Chat
 ```
@@ -264,9 +260,8 @@ GET  /chat/history                 → Message[]
 
 `model` 모듈에 provider별 어댑터를 두고, `ChatService`가 `ModelService`를 통해 호출하는 구조.
 
-- `claude.provider.ts` — Anthropic SDK 사용
-- `openai.provider.ts` — OpenAI SDK 사용
-- `ModelService`가 `user.model` → parent provider 역참조 후 적절한 어댑터 선택
+- `ollama.provider.ts` — Ollama REST API 사용 (`OLLAMA_BASE_URL` 환경변수)
+- `ModelService`가 `user.model` → parent provider 역참조 후 어댑터 선택
 
 응답 shape (`POST /chat` 반환):
 ```
@@ -299,7 +294,6 @@ frontend/src/app/
 ### Register UI 핵심 요소
 - 이메일 / 비밀번호 입력
 - model 선택 (common_code `model` 목록)
-- 선택한 model의 provider API 키 입력
 
 ### Chat UI 핵심 요소
 - 메시지 목록 (스크롤)
@@ -309,8 +303,7 @@ frontend/src/app/
 
 ### Profile UI 핵심 요소
 - 이메일 / 비밀번호 변경
-- model 변경 (license_key가 없는 provider의 model은 선택 불가)
-- provider별 API 키 등록 / 변경
+- model 변경
 
 ---
 
@@ -332,6 +325,8 @@ OLLAMA_BASE_URL=http://ollama:11434
 ## 결정 사항
 
 - Ollama 임베딩 연동은 Spec 2로 미룸 — message.embedding 컬럼만 생성
+- Ollama chat 모델은 `qwen2.5:3b` 사용. 외부 API(Claude/GPT) 연동은 Spec 4로 미룸
+- license_key 테이블은 스키마에 유지하되 Spec 1에서는 미사용 (Spec 4에서 외부 API 연동 시 활성화)
 - 토론 모드 UI는 Spec 2 이후로 미룸 — LLM 인터페이스만 멀티모델 대응으로 설계
 - clustering 컨테이너는 Docker Compose에 포함하되 Spec 2까지 미사용
 - `updated_at` 자동 갱신: `set_updated_at` 함수 1개 생성 후 해당 컬럼이 있는 각 테이블마다 트리거 개별 등록

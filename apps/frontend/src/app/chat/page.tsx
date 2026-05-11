@@ -18,7 +18,6 @@ interface Message {
 interface UserProfile {
   email: string;
   model: string | null;
-  providers: { provider: string; hasKey: boolean }[];
 }
 
 export default function ChatPage() {
@@ -27,13 +26,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!localStorage.getItem('accessToken')) {
-      router.replace('/login');
-    }
-  }, [router]);
-
-  const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
+const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
     queryKey: ['user'],
     queryFn: () => api.get('/user').then(r => r.data),
   });
@@ -62,8 +55,8 @@ export default function ChatPage() {
     sendMutation.mutate(input.trim());
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('accessToken');
+  const handleLogout = async () => {
+    await api.post('/auth/logout');
     router.replace('/login');
   };
 
@@ -111,7 +104,7 @@ export default function ChatPage() {
                 >
                   {msg.role === 'assistant' && (
                     <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mr-2 flex-shrink-0 self-end">
-                      {msg.provider === 'claude' ? 'C' : 'G'}
+                      AI
                     </div>
                   )}
                   <div

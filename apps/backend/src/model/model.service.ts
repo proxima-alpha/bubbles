@@ -1,21 +1,18 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import { ClaudeProvider, LlmMessage, LlmResponse } from './providers/claude.provider';
-import { OpenAiProvider } from './providers/openai.provider';
+import { OllamaProvider, LlmMessage, LlmResponse } from './providers/ollama.provider';
 
 @Injectable()
 export class ModelService {
   constructor(
     private prisma: PrismaService,
-    private claudeProvider: ClaudeProvider,
-    private openAiProvider: OpenAiProvider,
+    private config: ConfigService,
+    private ollamaProvider: OllamaProvider,
   ) {}
 
   async chat(userId: string, messages: LlmMessage[]): Promise<LlmResponse> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { license_keys: true },
-    });
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user?.model) throw new ForbiddenException('No model selected');
 
     const modelCode = await this.prisma.common_code.findUnique({
@@ -24,14 +21,10 @@ export class ModelService {
     if (!modelCode?.parent_code) throw new NotFoundException('Model provider not found');
 
     const provider = modelCode.parent_code;
-    const licenseKey = user.license_keys.find(lk => lk.provider === provider);
-    if (!licenseKey) throw new ForbiddenException('No API key for this provider');
 
-    if (provider === 'claude') {
-      return this.claudeProvider.chat(licenseKey.key, user.model, messages);
-    }
-    if (provider === 'gpt') {
-      return this.openAiProvider.chat(licenseKey.key, user.model, messages);
+    if (provider === 'ollama') {
+      const baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
+      return this.ollamaProvider.chat(baseUrl, user.model, messages);
     }
 
     throw new NotFoundException(`Unknown provider: ${provider}`);

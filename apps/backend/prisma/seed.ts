@@ -1,6 +1,9 @@
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 
-const prisma = new PrismaClient();
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   const categories = [
@@ -22,23 +25,14 @@ async function main() {
   const codes = [
     { category_code: 'role', code: 'user', name: '사용자', order: 1 },
     { category_code: 'role', code: 'assistant', name: 'AI', order: 2 },
-    { category_code: 'provider', code: 'claude', name: 'Claude', order: 1 },
-    { category_code: 'provider', code: 'gpt', name: 'GPT', order: 2 },
+    { category_code: 'provider', code: 'ollama', name: 'Ollama', order: 1 },
     {
       category_code: 'model',
-      code: 'claude-opus-4-7',
-      name: 'Claude Opus 4.7',
+      code: 'qwen2.5:3b',
+      name: 'Qwen 2.5 3B',
       parent_category_code: 'provider',
-      parent_code: 'claude',
+      parent_code: 'ollama',
       order: 1,
-    },
-    {
-      category_code: 'model',
-      code: 'gpt-4o-2024-08-06',
-      name: 'GPT-4o',
-      parent_category_code: 'provider',
-      parent_code: 'gpt',
-      order: 2,
     },
     { category_code: 'memory_type', code: 'main', name: '메인 메모리', order: 1 },
     { category_code: 'memory_type', code: 'knowledge', name: '지식 메모리', order: 2 },

@@ -6,39 +6,23 @@ import Link from 'next/link';
 import api from '@/lib/api';
 
 const MODELS = [
-  { code: 'claude-opus-4-7', name: 'Claude Opus 4.7', provider: 'claude' },
-  { code: 'gpt-4o-2024-08-06', name: 'GPT-4o', provider: 'gpt' },
+  { code: 'qwen2.5:3b', name: 'Qwen 2.5 3B' },
 ];
-
-const PROVIDER_LABELS: Record<string, string> = {
-  claude: 'Anthropic API 키',
-  gpt: 'OpenAI API 키',
-};
 
 export default function RegisterPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [model, setModel] = useState('');
-  const [licenseKeys, setLicenseKeys] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const selectedModel = MODELS.find(m => m.code === model);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedModel) return;
     setLoading(true);
     setError('');
     try {
-      const { data } = await api.post('/auth/register', {
-        email,
-        password,
-        model,
-        licenseKeys: [{ provider: selectedModel.provider, key: licenseKeys[selectedModel.provider] || '' }],
-      });
-      localStorage.setItem('accessToken', data.accessToken);
+      await api.post('/auth/register', { email, password, model });
       router.push('/chat');
     } catch (err: unknown) {
       const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
@@ -90,23 +74,6 @@ export default function RegisterPage() {
               ))}
             </select>
           </div>
-          {selectedModel && (
-            <div>
-              <label className="block text-sm font-medium mb-1">
-                {PROVIDER_LABELS[selectedModel.provider]}
-              </label>
-              <input
-                type="password"
-                value={licenseKeys[selectedModel.provider] || ''}
-                onChange={e =>
-                  setLicenseKeys(prev => ({ ...prev, [selectedModel.provider]: e.target.value }))
-                }
-                placeholder="sk-..."
-                className="w-full border rounded px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-black"
-                required
-              />
-            </div>
-          )}
           {error && <p className="text-red-500 text-sm">{error}</p>}
           <button
             type="submit"

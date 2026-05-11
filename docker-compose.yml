@@ -17,6 +17,19 @@ services:
     volumes:
       - ollama_data:/root/.ollama
 
+  ollama-init:
+    image: ollama/ollama
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until ollama list > /dev/null 2>&1; do sleep 1; done
+        ollama pull nomic-embed-text
+        ollama pull qwen2.5:3b
+
   clustering:
     build:
       context: ./apps/clustering
@@ -29,7 +42,7 @@ services:
     ports:
       - "3001:3001"
     env_file:
-      - .env
+      - ./apps/backend/.env
     depends_on:
       - db
       - ollama
@@ -40,7 +53,7 @@ services:
     ports:
       - "3000:3000"
     env_file:
-      - .env
+      - ./apps/frontend/.env
     depends_on:
       - backend
 

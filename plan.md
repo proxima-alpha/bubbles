@@ -144,14 +144,14 @@ bubbles/
 ## 개발 단계
 
 ### Spec 1 — 기반 세팅
-- [ ] (1) Docker Compose 구성 (postgres+pgvector, ollama, clustering, backend, frontend)
-- [ ] (2) NestJS 프로젝트 초기화
-- [ ] (3) Next.js 프로젝트 초기화
-- [ ] (4) DB 설계 및 마이그레이션
-- [ ] (5) 인증 구현 (JWT)
-- [ ] (6) LLM API 연동 (Claude + GPT 스위칭)
-- [ ] (7) 기본 Chat UI (model null이면 모델 선택 화면 조건부 표시)
-- [ ] (8) Profile UI (본인 정보 변경, model 변경, API 키 변경)
+- [x] (1) Docker Compose 구성 (postgres+pgvector, ollama, clustering, backend, frontend)
+- [x] (2) NestJS 프로젝트 초기화
+- [x] (3) Next.js 프로젝트 초기화
+- [x] (4) DB 설계 및 마이그레이션
+- [x] (5) 인증 구현 (JWT)
+- [x] (6) LLM 연동 (Ollama 로컬 모델 우선 — `qwen2.5:3b`, 외부 API는 Spec 4에서)
+- [x] (7) 기본 Chat UI (model null이면 모델 선택 화면 조건부 표시)
+- [x] (8) Profile UI (본인 정보 변경, model 변경, API 키 변경)
 
 ### Spec 2 — RAG 파이프라인
 - [ ] (1) LLM 응답 구조화 포맷 정의 (message)
@@ -170,8 +170,9 @@ bubbles/
 - [ ] (5) 망각 옵션 (score 기반 knowledge memory 자동 정리)
 
 ### Spec 4 — 배포 준비
-- [ ] (1) 설정 페이지 (모델 선택, API key 관리)
-- [ ] (2) 배포 설정
+- [ ] (1) 외부 LLM API 연동 (Claude + GPT 스위칭, license_key 기반)
+- [ ] (2) 설정 페이지 (모델 선택, API key 관리)
+- [ ] (3) 배포 설정
 
 ---
 
