@@ -21,6 +21,16 @@ Bubbles is a personal AI chat web app with RAG-based memory.
 - Run tests only after explicit /test.
 - Mock LLM calls in tests.
 
+## Working Style
+- Think before coding. State assumptions explicitly when they matter.
+- If requirements are unclear or have multiple valid interpretations, ask instead of guessing.
+- Prefer the simplest implementation that satisfies the request.
+- Do not add abstractions, configurability, or error handling that were not requested.
+- Make surgical changes only. Every changed line should trace directly to the request.
+- Do not clean up unrelated code, comments, or formatting.
+- Remove only the unused code created by your own change.
+- For multi-step tasks, define a short goal-driven plan with a clear verification step.
+
 ## Backend
 - Use NestJS modules/controllers/services.
 - Use DTOs with class-validator.

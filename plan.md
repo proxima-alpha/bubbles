@@ -187,6 +187,8 @@ bubbles/
 | **main memory 승격** | `is_pinned = true OR (score > 0.9 AND sensitivity <= 0.3)` 조건을 만족하는 knowledge memories를 LLM으로 합성한 결과 |
 | **license_key** | 유저가 등록한 LLM API 키. provider별로 1개씩 보유하며 해당 provider 호출 시 사용 |
 | **망각 (forgetting)** | knowledge memory를 옵션으로 정리하는 과정. messages는 삭제 없이 영구 보관 |
+| **temporary_penalty** | knowledge memory 생성/merge 시 LLM이 산정하는 점수 (0~1). 장기 기억으로 남길 가치가 낮을수록 높음. "현재 중요성"이 아닌 "휘발성"을 나타냄. 오늘 날씨·일시적 감정 등은 높고, 직업·가치관·반복 패턴 등은 낮음. score 공식에서 패널티로 작용 |
+| **memorize** | 미처리 messages를 클러스터링하여 knowledge memory를 생성/merge하는 과정. 스케줄러 배치의 핵심 단계. |
 
 ---
 

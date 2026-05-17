@@ -8,7 +8,7 @@
 
 ## 태스크
 
-- [ ] (1) DB 마이그레이션: memory 스코어 컬럼 + embedding 추가
+- [ ] (1) DB 마이그레이션: memory 스코어 컬럼 + embedding 추가, message 토큰 사용량 컬럼 추가
 - [ ] (2) Ollama 임베딩 연동 (message 저장 시 embedding 생성, 실패 시 재시도 후 에러 반환)
 - [ ] (3) 스케줄러 기반 구조 + 트리거 조건
 - [ ] (4) clustering FastAPI 서버 구현 (HDBSCAN)
@@ -50,15 +50,73 @@ model memory {
   user_action_score   Float  @default(0)
   llm_confidence_hint Float  @default(0)
   confirmed_score     Float  @default(0)
+  temporary_penalty   Float     @default(0)   // LLM 산정: 장기 기억 가치가 낮을수록 높음
+  content             String?   @db.Text      // memory_content 원문 합산 텍스트 (클러스터링 유사도 비교용)
+  summary             String?   @db.Text      // LLM 생성 요약 (RAG 컨텍스트 주입용)
+  last_referenced_at  DateTime? @db.Timestamptz  // 마지막 RAG 조회 시각
+  reference_count     Int       @default(0)   // RAG 조회 누적 횟수
 }
 ```
+
+### message 테이블 추가 컬럼
+
+```prisma
+model message {
+  // 기존 컬럼 유지 ...
+
+  // Spec 2 추가 — Ollama 응답 마지막 청크의 usage 필드에서 추출
+  input_tokens  Int?
+  output_tokens Int?
+}
+```
+
+Ollama 스트리밍 응답의 마지막 청크(`data.done === true`)에 `prompt_eval_count`(입력), `eval_count`(출력) 필드가 포함됨. `ollama.provider.ts`에서 추출해 `ChatService`로 반환.
 
 > **score 산정 공식** (plan.md 기준):
 > `0.25*importance + 0.25*durability + 0.20*reusefulness + 0.20*confirmed + 0.10*recency - 0.30*sensitivity_penalty - 0.30*temporary_penalty`
 >
 > confirmed = `0.4*explicit_signal + 0.3*repetition_score + 0.2*user_action_score + 0.1*llm_confidence_hint`
+>
+> recency (동적 계산, 저장 안 함):
+> ```
+> days = (now - last_referenced_at) in days   // last_referenced_at이 null이면 created_at 사용
+> recency = exp(-days / RECENCY_DECAY_FACTOR)  // .env: RECENCY_DECAY_FACTOR=30
+> ```
 
-마이그레이션: `npx prisma migrate dev --name add-memory-scoring`
+### schedule 테이블 신규 생성
+
+유저별 스케줄 실행 내역. 여러 스케줄 타입을 공통으로 관리.
+`updated_at`이 마지막 실행 시각 역할을 겸함.
+
+```prisma
+model schedule {
+  id            String   @id @default(uuid()) @db.Uuid
+  user_id       String   @db.Uuid
+  type_category String   @default("schedule_type") @db.VarChar
+  type          String   @db.VarChar
+  created_at    DateTime @default(now()) @db.Timestamptz
+  updated_at    DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  @@unique([user_id, type])
+
+  user user @relation(...)
+}
+```
+
+### 시드 추가
+
+```typescript
+// common_code_category
+{ code: 'schedule_type', name: '스케줄 유형', order: 6 }
+
+// common_code
+{ category_code: 'schedule_type', code: 'memory_batch', name: '메모리 배치', order: 1 }
+```
+
+마이그레이션 (memory + message + schedule 변경을 하나로 합침):
+```bash
+npx prisma migrate dev --name spec002-rag-pipeline
+```
 
 ---
 
@@ -137,6 +195,9 @@ RAG_TOP_K=5
 
 # Clustering service URL
 CLUSTERING_URL=http://clustering:8000
+
+# Recency 감쇠 계수 (일 단위, 클수록 천천히 감쇠)
+RECENCY_DECAY_FACTOR=30
 ```
 
 ### 패키지 추가
@@ -159,27 +220,46 @@ src/memory/
 
 ### 트리거 조건
 
-매 1분마다 폴링. 아래 조건 중 하나 충족 시 배치 실행:
+매 1분마다 폴링. 두 조건을 독립적으로 판단하여 대상 유저 목록 합산:
 
 ```typescript
-@Cron('* * * * *') // 1분마다
-async checkAndRun(userId: string) {
+@Cron('* * * * *')
+async checkAndRun() {
   const threshold = this.config.get<number>('SCHEDULER_MESSAGE_THRESHOLD', 5);
-  const unproceeded = await this.prisma.message.count({
-    where: { user_id: userId, is_proceeded: false, embedding: { not: null } },
-  });
-  const dayPassed = Date.now() - this.lastRunAt > 86_400_000;
 
-  if (unproceeded >= threshold || dayPassed) {
-    await this.runBatch(userId);
-    this.lastRunAt = Date.now();
+  // 조건 1: 미처리 messages >= N인 유저
+  const usersOverThreshold = await this.prisma.$queryRaw<{ user_id: string }[]>`
+    SELECT user_id FROM message
+    WHERE is_proceeded = false AND embedding IS NOT NULL
+    GROUP BY user_id
+    HAVING COUNT(*) >= ${threshold}
+  `;
+
+  // 조건 2: 마지막 배치 후 1일 경과한 유저 (schedule 기록 없는 유저 포함)
+  const usersOverDay = await this.prisma.$queryRaw<{ user_id: string }[]>`
+    SELECT u.id AS user_id FROM "user" u
+    LEFT JOIN schedule s ON s.user_id = u.id AND s.type = 'memory_batch'
+    WHERE s.id IS NULL OR s.updated_at < NOW() - INTERVAL '1 day'
+  `;
+
+  const targetIds = [...new Set([
+    ...usersOverThreshold.map(u => u.user_id),
+    ...usersOverDay.map(u => u.user_id),
+  ])];
+
+  for (const user_id of targetIds) {
+    const batchResults = await this.runBatch(user_id);
+    // batchResults: 이번 배치에서 생성/merge된 knowledge memory 목록
+    // type: { id: string; is_pinned: boolean; score: number; sensitivity: number }[]
+    await this.updateMainMemory(user_id, batchResults);
+    await this.prisma.schedule.upsert({
+      where: { user_id_type: { user_id, type: 'memory_batch' } },
+      update: {},  // updated_at은 @updatedAt이 자동 갱신
+      create: { user_id, type: 'memory_batch' },
+    });
   }
 }
-
-private lastRunAt = 0; // 재시작 시 리셋 허용 (개인 프로젝트)
 ```
-
-> 스케줄러는 user별로 실행하지 않고, 전체 미처리 messages 기준으로 판단 후 user별로 분리 처리.
 
 ---
 
@@ -282,6 +362,9 @@ private async runClustering(vectors: number[][], ids: string[]) {
 
 ### 로직 흐름
 
+`runBatch(userId)`는 아래를 수행하고 생성/merge된 memory 목록을 반환한다:
+`Promise<{ id: string; is_pinned: boolean; score: number; sensitivity: number }[]>`
+
 ```
 각 클러스터에 대해:
   1. 클러스터 centroid 계산 (벡터 평균)
@@ -294,6 +377,7 @@ private async runClustering(vectors: number[][], ids: string[]) {
   5. LLM 호출 (클러스터 수만큼 병렬): keywords + 점수 요소 산정
   6. 포함 messages: is_proceeded = true, memory_content__message FK 연결
   7. 노이즈: is_proceeded = false 유지 (다음 배치에서 재처리)
+반환: 위에서 생성/merge된 memory rows (id, is_pinned, score, sensitivity)
 ```
 
 ### LLM 프롬프트 (키워드 + 점수 산정)
@@ -311,15 +395,37 @@ private async runClustering(vectors: number[][], ids: string[]) {
   "reusefulness": 0.0~1.0,
   "sensitivity": 0.0~1.0,
   "explicit_signal": 0.0~1.0,
-  "llm_confidence_hint": 0.0~1.0
+  "llm_confidence_hint": 0.0~1.0,
+  "temporary_penalty": 0.0~1.0
 }
+
+// temporary_penalty: 이 정보가 장기 기억으로 남길 가치가 낮을수록 높게 부여
+// (예: 오늘 날씨, 일시적 감정 → 높음 / 직업, 가치관 → 낮음)
 ```
 
 ---
 
 ## 6. Main Memory 재생성
 
-### 승격 조건
+`runBatch()`가 반환한 `batchResults`를 `updateMainMemory(userId, batchResults)`로 전달.
+
+### 트리거 조건
+
+이번 배치(batchResults)에서 생성/merge된 knowledge memories 중 승격 조건을 만족하는 게 1개 이상일 때만 실행. 없으면 스킵.
+
+```typescript
+// batchResults: runBatch()의 반환값
+// type: { id: string; is_pinned: boolean; score: number; sensitivity: number }[]
+async updateMainMemory(userId: string, batchResults: { id: string; is_pinned: boolean; score: number; sensitivity: number }[]) {
+  const newlyPromoted = batchResults.filter(m =>
+    m.is_pinned || (m.score > 0.9 && m.sensitivity <= 0.3)
+  );
+  if (newlyPromoted.length === 0) return;
+```
+
+### 승격된 memories 조회
+
+트리거 통과 후, 전체 승격 조건 만족하는 knowledge memories를 LLM에 주입:
 
 ```typescript
 const promoted = await this.prisma.memory.findMany({
@@ -332,7 +438,6 @@ const promoted = await this.prisma.memory.findMany({
       { AND: [{ score: { gt: 0.9 } }, { sensitivity: { lte: 0.3 } }] },
     ],
   },
-  include: { contents: true },
 });
 ```
 
@@ -382,28 +487,33 @@ const mainMemory = await this.memoryService.getActiveMainMemory(userId);
 const topKnowledge = await this.memoryService.getTopKnowledge(userId, queryEmbedding, topK);
 const systemPrompt = buildSystemPrompt(
   mainMemory,
-  topKnowledge.map(m => m.content),
+  topKnowledge.map(m => m.summary),
 );
 ```
 
 ### memoryService.getTopKnowledge
 
-pgvector cosine distance 사용:
+`memory.summary`(LLM 요약)를 RAG 주입용으로 조회 — JOIN 없음:
 
 ```typescript
 async getTopKnowledge(userId: string, embedding: number[], topK: number) {
-  return this.prisma.$queryRaw`
-    SELECT mc.content
-    FROM memory m
-    JOIN memory_content mc ON mc.memory_id = m.id
-    WHERE m.user_id = ${userId}::uuid
-      AND m.type = 'knowledge'
-      AND m.is_active = true
-      AND m.embedding IS NOT NULL
-    ORDER BY m.embedding <=> ${embedding}::vector
+  return this.prisma.$queryRaw<{ summary: string }[]>`
+    SELECT summary
+    FROM memory
+    WHERE user_id = ${userId}::uuid
+      AND type = 'knowledge'
+      AND is_active = true
+      AND embedding IS NOT NULL
+      AND summary IS NOT NULL
+    ORDER BY embedding <=> ${embedding}::vector
     LIMIT ${topK}
   `;
 }
+```
+
+> **sync 규칙**:
+> - `memory.content` = `memory_contents.orderBy(order).map(c => c.content).join('\n\n')` — 생성/merge 시 갱신. 클러스터링 유사도 비교에 사용.
+> - `memory.summary` = LLM이 생성한 요약 문장 — 생성/merge/수동편집 시 갱신. RAG 컨텍스트 주입에 사용.
 ```
 
 ### OllamaProvider 시스템 프롬프트 지원
