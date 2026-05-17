@@ -52,40 +52,71 @@ export default function ChatPage() {
     setIsStreaming(true);
     setStreamingContent('');
 
-    const res = await fetch(`${API_URL}/chat/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ content }),
-    });
+    try {
+      const res = await fetch(`${API_URL}/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ content }),
+      });
 
-    if (!res.ok || !res.body) {
-      setIsStreaming(false);
-      return;
-    }
+      if (res.status === 401) {
+        router.replace('/login');
+        return;
+      }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
+      if (!res.ok || !res.body) {
+        return;
+      }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      const lines = decoder.decode(value).split('\n').filter(l => l.startsWith('data: '));
-      for (const line of lines) {
-        const payload = line.slice(6);
-        if (payload === '[DONE]') {
-          setIsStreaming(false);
-          setStreamingContent('');
-          queryClient.invalidateQueries({ queryKey: ['chat-history'] });
-          return;
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+        const events = buffer.split('\n\n');
+        buffer = events.pop() ?? '';
+
+        for (const event of events) {
+          const payload = event
+            .split('\n')
+            .filter(line => line.startsWith('data: '))
+            .map(line => line.slice(6))
+            .join('\n');
+
+          if (!payload) continue;
+          if (payload === '[DONE]') {
+            setStreamingContent('');
+            queryClient.invalidateQueries({ queryKey: ['chat-history'] });
+            return;
+          }
+
+          const { token } = JSON.parse(payload);
+          setStreamingContent(prev => prev + token);
         }
+
+        if (done) break;
+      }
+
+      const payload = buffer
+        .split('\n')
+        .filter(line => line.startsWith('data: '))
+        .map(line => line.slice(6))
+        .join('\n');
+
+      if (payload === '[DONE]') {
+        setStreamingContent('');
+        queryClient.invalidateQueries({ queryKey: ['chat-history'] });
+      } else if (payload) {
         const { token } = JSON.parse(payload);
         setStreamingContent(prev => prev + token);
       }
+    } finally {
+      setIsStreaming(false);
     }
-
-    setIsStreaming(false);
   };
 
   const handleLogout = async () => {

@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -22,7 +23,15 @@ export class UserService {
       data.salt = salt;
       data.password = crypto.createHash('sha256').update(dto.password + salt).digest('hex');
     }
-    await this.prisma.user.update({ where: { id: userId }, data });
+    try {
+      await this.prisma.user.update({ where: { id: userId }, data });
+    } catch (error) {
+      if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Email already in use');
+      }
+      throw error;
+    }
+
     return {};
   }
 

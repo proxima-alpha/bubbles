@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import { UserService } from './user.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -62,6 +63,20 @@ describe('UserService', () => {
 
       await expect(service.updateModel('u1', { model: 'invalid-model' }))
         .rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('updateUser', () => {
+    it('중복 이메일이면 ConflictException이 발생해야 한다', async () => {
+      mockPrisma.user.update.mockRejectedValue(
+        new PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(service.updateUser('u1', { email: 'dup@a.com' }))
+        .rejects.toThrow(ConflictException);
     });
   });
 });

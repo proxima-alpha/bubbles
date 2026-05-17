@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import { AuthService } from './auth.service';
@@ -9,6 +9,9 @@ const mockPrisma = {
   user: {
     findUnique: jest.fn(),
     create: jest.fn(),
+  },
+  common_code: {
+    findUnique: jest.fn(),
   },
 };
 
@@ -32,6 +35,7 @@ describe('AuthService', () => {
   describe('register', () => {
     it('새 이메일로 가입하면 accessToken이 반환되어야 한다', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.common_code.findUnique.mockResolvedValue({ category_code: 'model', code: 'exaone3.5:2.4b' });
       mockPrisma.user.create.mockResolvedValue({ id: 'u1', email: 'a@a.com' });
 
       const result = await service.register({ email: 'a@a.com', password: 'pass1234', model: 'exaone3.5:2.4b' });
@@ -46,8 +50,17 @@ describe('AuthService', () => {
         .rejects.toThrow(ConflictException);
     });
 
+    it('유효하지 않은 모델이면 NotFoundException이 발생해야 한다', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.common_code.findUnique.mockResolvedValue(null);
+
+      await expect(service.register({ email: 'a@a.com', password: 'pass1234', model: 'invalid-model' }))
+        .rejects.toThrow(NotFoundException);
+    });
+
     it('비밀번호는 salt와 함께 해시되어 저장되어야 한다', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.common_code.findUnique.mockResolvedValue({ category_code: 'model', code: 'exaone3.5:2.4b' });
       mockPrisma.user.create.mockResolvedValue({ id: 'u1', email: 'a@a.com' });
 
       await service.register({ email: 'a@a.com', password: 'pass1234', model: 'exaone3.5:2.4b' });

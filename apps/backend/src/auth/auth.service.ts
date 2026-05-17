@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,6 +15,11 @@ export class AuthService {
   async register(dto: RegisterDto): Promise<{ accessToken: string }> {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) throw new ConflictException('Email already in use');
+
+    const modelCode = await this.prisma.common_code.findUnique({
+      where: { category_code_code: { category_code: 'model', code: dto.model } },
+    });
+    if (!modelCode) throw new NotFoundException('Model not found');
 
     const salt = crypto.randomBytes(32).toString('hex');
     const password = crypto.createHash('sha256').update(dto.password + salt).digest('hex');
