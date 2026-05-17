@@ -247,9 +247,12 @@ PUT  /user/model      { model } → { }
 
 ### Chat
 ```
-POST /chat            { content } → { content, provider, model }
+POST /chat/stream     { content } → SSE stream (text/event-stream)
 GET  /chat/history                 → Message[]
 ```
+
+> **구현 변경**: 원 스펙의 `POST /chat → { content, provider, model }` 대신 SSE 스트리밍으로 구현.
+> 스트림 이벤트: `data: { token }` 반복 → `data: [DONE]` 종료.
 
 - 모든 Chat 엔드포인트는 JWT Bearer 인증 필요
 - `user.model`이 null이면 403 반환
