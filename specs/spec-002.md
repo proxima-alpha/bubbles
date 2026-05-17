@@ -40,7 +40,6 @@ model memory {
 
   // Spec 2 추가
   embedding           Unsupported("vector(768)")?
-  score               Float  @default(0)
   sensitivity         Float  @default(0)
   importance          Float  @default(0)
   durability          Float  @default(0)
@@ -72,16 +71,17 @@ model message {
 
 Ollama 스트리밍 응답의 마지막 청크(`data.done === true`)에 `prompt_eval_count`(입력), `eval_count`(출력) 필드가 포함됨. `ollama.provider.ts`에서 추출해 `ChatService`로 반환.
 
-> **score 산정 공식** (plan.md 기준):
-> `0.25*importance + 0.25*durability + 0.20*reusefulness + 0.20*confirmed + 0.10*recency - 0.30*sensitivity_penalty - 0.30*temporary_penalty`
+> **score 산정 공식** (plan.md 기준) — DB에 저장하지 않고 동적 계산:
+> `0.25*importance + 0.25*durability + 0.20*reusefulness + 0.20*confirmed_score - 0.30*sensitivity - 0.30*temporary_penalty`
 >
-> confirmed = `0.4*explicit_signal + 0.3*repetition_score + 0.2*user_action_score + 0.1*llm_confidence_hint`
+> confirmed_score = `0.4*explicit_signal + 0.3*repetition_score + 0.2*user_action_score + 0.1*llm_confidence_hint`
 >
-> recency (동적 계산, 저장 안 함):
+> recency (RAG 정렬 보정용, 저장하지 않음):
 > ```
 > days = (now - last_referenced_at) in days   // last_referenced_at이 null이면 created_at 사용
 > recency = exp(-days / RECENCY_DECAY_FACTOR)  // .env: RECENCY_DECAY_FACTOR=30
 > ```
+> score는 배치 시 컴포넌트 값으로 앱 코드에서 계산. 승격 조건 판단 등에 사용하며 DB에 별도 컬럼으로 저장하지 않음.
 
 ### schedule 테이블 신규 생성
 
@@ -95,12 +95,29 @@ model schedule {
   type_category String   @default("schedule_type") @db.VarChar
   type          String   @db.VarChar
   created_at    DateTime @default(now()) @db.Timestamptz
-  updated_at    DateTime @default(now()) @updatedAt @db.Timestamptz
+  updated_at    DateTime @default(now()) @db.Timestamptz  // DB trigger로 자동 갱신
 
   @@unique([user_id, type])
 
   user user @relation(...)
 }
+```
+
+`updated_at` 자동 갱신은 Prisma `@updatedAt` 대신 DB trigger 사용. 모든 테이블의 `updated_at`에 동일하게 적용:
+
+```sql
+-- 마이그레이션 SQL에 포함 (schedule 테이블 예시, 다른 테이블도 동일 패턴)
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER schedule_updated_at
+BEFORE UPDATE ON schedule
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
 
 ### 시드 추가
@@ -177,7 +194,12 @@ try {
 }
 
 // assistant message 임베딩은 스트림 완료 후 background (실패해도 503 아님)
-this.embedAndSaveBackground(assistantMsg.id, fullContent);
+// fire-and-forget: 실패 시 콘솔 로그만 남기고 재시도 없음
+void this.modelService.embedText(fullContent)
+  .then(vec => this.prisma.$executeRaw`
+    UPDATE message SET embedding = ${vec}::vector WHERE id = ${assistantMsg.id}::uuid
+  `)
+  .catch(e => console.error('assistant embed failed', e));
 ```
 
 ---
@@ -236,10 +258,15 @@ async checkAndRun() {
   `;
 
   // 조건 2: 마지막 배치 후 1일 경과한 유저 (schedule 기록 없는 유저 포함)
+  //          단, 미처리 메시지(embedding 있음)가 1개 이상인 유저만 대상
   const usersOverDay = await this.prisma.$queryRaw<{ user_id: string }[]>`
     SELECT u.id AS user_id FROM "user" u
     LEFT JOIN schedule s ON s.user_id = u.id AND s.type = 'memory_batch'
-    WHERE s.id IS NULL OR s.updated_at < NOW() - INTERVAL '1 day'
+    WHERE (s.id IS NULL OR s.updated_at < NOW() - INTERVAL '1 day')
+      AND EXISTS (
+        SELECT 1 FROM message m
+        WHERE m.user_id = u.id AND m.is_proceeded = false AND m.embedding IS NOT NULL
+      )
   `;
 
   const targetIds = [...new Set([
@@ -254,7 +281,7 @@ async checkAndRun() {
     await this.updateMainMemory(user_id, batchResults);
     await this.prisma.schedule.upsert({
       where: { user_id_type: { user_id, type: 'memory_batch' } },
-      update: {},  // updated_at은 @updatedAt이 자동 갱신
+      update: { updated_at: new Date() },  // UPDATE를 강제해야 DB trigger가 발동
       create: { user_id, type: 'memory_batch' },
     });
   }
@@ -291,7 +318,7 @@ def cluster(req: ClusterRequest):
     vectors = np.array(req.vectors)
     ids = req.ids
 
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=2, metric='euclidean')
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=2, metric='cosine')
     labels = clusterer.fit_predict(vectors)
 
     clusters: dict[int, list[str]] = {}
@@ -362,8 +389,10 @@ private async runClustering(vectors: number[][], ids: string[]) {
 
 ### 로직 흐름
 
-`runBatch(userId)`는 아래를 수행하고 생성/merge된 memory 목록을 반환한다:
+`runBatch(userId)`는 아래를 수행하고 생성/merge된 memory 목록을 반환한다.
+score는 컴포넌트 값으로 앱 코드에서 계산하여 포함:
 `Promise<{ id: string; is_pinned: boolean; score: number; sensitivity: number }[]>`
+(score는 저장되지 않는 동적 계산값 — 승격 조건 판단 후 버려짐)
 
 ```
 각 클러스터에 대해:
@@ -414,7 +443,7 @@ private async runClustering(vectors: number[][], ids: string[]) {
 이번 배치(batchResults)에서 생성/merge된 knowledge memories 중 승격 조건을 만족하는 게 1개 이상일 때만 실행. 없으면 스킵.
 
 ```typescript
-// batchResults: runBatch()의 반환값
+// batchResults: runBatch()의 반환값 — score는 배치 시 동적 계산값 (DB 미저장)
 // type: { id: string; is_pinned: boolean; score: number; sensitivity: number }[]
 async updateMainMemory(userId: string, batchResults: { id: string; is_pinned: boolean; score: number; sensitivity: number }[]) {
   const newlyPromoted = batchResults.filter(m =>
@@ -450,7 +479,7 @@ const promoted = await this.prisma.memory.findMany({
 {current_main_memory_content}
 
 [새로 추가된 지식]
-{promoted_knowledge_contents}
+{promoted.map(m => m.summary).join('\n---\n')}
 
 위 내용을 통합하여 사용자를 잘 아는 AI가 기억해야 할 핵심 정보를 압축하여 작성하세요.
 ```
@@ -459,7 +488,7 @@ const promoted = await this.prisma.memory.findMany({
 
 - 기존 main memory: `is_active = false`, `deactivated_at = now()`
 - 새 memory: `type = 'main'`, `history_type = 'renewed'`, `version = 기존+1`
-  - `root_memory_id`: 최초 main memory의 id (없으면 자기 자신)
+  - `root_memory_id`: null (null이면 본인이 root로 처리)
   - `parent_memory_id`: 비활성화된 이전 main memory id
 
 ---
@@ -497,8 +526,8 @@ const systemPrompt = buildSystemPrompt(
 
 ```typescript
 async getTopKnowledge(userId: string, embedding: number[], topK: number) {
-  return this.prisma.$queryRaw<{ summary: string }[]>`
-    SELECT summary
+  const rows = await this.prisma.$queryRaw<{ id: string; summary: string }[]>`
+    SELECT id, summary
     FROM memory
     WHERE user_id = ${userId}::uuid
       AND type = 'knowledge'
@@ -508,13 +537,25 @@ async getTopKnowledge(userId: string, embedding: number[], topK: number) {
     ORDER BY embedding <=> ${embedding}::vector
     LIMIT ${topK}
   `;
+
+  if (rows.length > 0) {
+    const ids = rows.map(r => r.id);
+    await this.prisma.$executeRaw`
+      UPDATE memory
+      SET last_referenced_at = NOW(),
+          reference_count = reference_count + 1
+      WHERE id = ANY(${ids}::uuid[])
+    `;
+  }
+
+  return rows;
 }
 ```
 
 > **sync 규칙**:
-> - `memory.content` = `memory_contents.orderBy(order).map(c => c.content).join('\n\n')` — 생성/merge 시 갱신. 클러스터링 유사도 비교에 사용.
-> - `memory.summary` = LLM이 생성한 요약 문장 — 생성/merge/수동편집 시 갱신. RAG 컨텍스트 주입에 사용.
-```
+> - `memory.content` (knowledge only) = `memory_contents.orderBy(order).map(c => c.content).join('\n\n')` — 생성/merge 시 갱신. 클러스터링 유사도 비교에 사용.
+> - `memory.summary` = LLM이 생성한 텍스트 — knowledge: 요약 문장, main: LLM 합성 전문. RAG 컨텍스트 주입에 사용.
+> - `getActiveMainMemory(userId)`: `SELECT summary FROM memory WHERE user_id = ? AND type = 'main' AND is_active = true LIMIT 1` — `summary` 필드 반환
 
 ### OllamaProvider 시스템 프롬프트 지원
 
@@ -540,7 +581,6 @@ GET /memory/knowledge   → KnowledgeMemory[]
 [{
   "id": "uuid",
   "keywords": ["키워드"],
-  "score": 0.75,
   "version": 1,
   "isPinned": false,
   "createdAt": "2024-01-01T00:00:00Z"
@@ -549,7 +589,7 @@ GET /memory/knowledge   → KnowledgeMemory[]
 
 ### Frontend — `/memory` 페이지
 
-- 카드 목록: 키워드 배지 + score + 날짜
+- 카드 목록: 키워드 배지 + 날짜
 - 삭제/편집은 Spec 3
 
 ---
