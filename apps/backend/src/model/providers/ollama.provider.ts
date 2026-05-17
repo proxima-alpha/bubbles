@@ -13,16 +13,28 @@ export interface LlmResponse {
 
 @Injectable()
 export class OllamaProvider {
-  async chat(baseUrl: string, model: string, messages: LlmMessage[]): Promise<LlmResponse> {
+  async *chatStream(baseUrl: string, model: string, messages: LlmMessage[]): AsyncGenerator<string> {
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: false }),
+      body: JSON.stringify({ model, messages, stream: true }),
     });
 
-    if (!res.ok) throw new InternalServerErrorException(`Ollama error: ${res.status}`);
+    if (!res.ok || !res.body) throw new InternalServerErrorException(`Ollama error: ${res.status}`);
 
-    const data = await res.json();
-    return { content: data.message.content, model: data.model, provider: 'ollama' };
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const lines = decoder.decode(value).split('\n').filter(Boolean);
+      for (const line of lines) {
+        const data = JSON.parse(line);
+        if (data.message?.content) yield data.message.content;
+        if (data.done) return;
+      }
+    }
   }
 }

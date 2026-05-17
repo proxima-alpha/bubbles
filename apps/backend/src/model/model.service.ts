@@ -1,7 +1,7 @@
-import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import { OllamaProvider, LlmMessage, LlmResponse } from './providers/ollama.provider';
+import { OllamaProvider, LlmMessage } from './providers/ollama.provider';
 
 @Injectable()
 export class ModelService {
@@ -11,22 +11,15 @@ export class ModelService {
     private ollamaProvider: OllamaProvider,
   ) {}
 
-  async chat(userId: string, messages: LlmMessage[]): Promise<LlmResponse> {
+  async getModelInfo(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user?.model) throw new ForbiddenException('No model selected');
+    const baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
+    return { model: user.model, baseUrl, provider: 'ollama' };
+  }
 
-    const modelCode = await this.prisma.common_code.findUnique({
-      where: { category_code_code: { category_code: 'model', code: user.model } },
-    });
-    if (!modelCode?.parent_code) throw new NotFoundException('Model provider not found');
-
-    const provider = modelCode.parent_code;
-
-    if (provider === 'ollama') {
-      const baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
-      return this.ollamaProvider.chat(baseUrl, user.model, messages);
-    }
-
-    throw new NotFoundException(`Unknown provider: ${provider}`);
+  async *chatStream(userId: string, messages: LlmMessage[]): AsyncGenerator<string> {
+    const { model, baseUrl } = await this.getModelInfo(userId);
+    yield* this.ollamaProvider.chatStream(baseUrl, model, messages);
   }
 }

@@ -12,6 +12,8 @@ services:
 
   ollama:
     image: ollama/ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
     ports:
       - "11434:11434"
     volumes:
@@ -28,7 +30,7 @@ services:
       - |
         until ollama list > /dev/null 2>&1; do sleep 1; done
         ollama pull nomic-embed-text
-        ollama pull qwen2.5:3b
+        ollama pull exaone3.5:2.4b
 
   clustering:
     build:

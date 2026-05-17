@@ -6,7 +6,7 @@ import Link from 'next/link';
 import api from '@/lib/api';
 
 const MODELS = [
-  { code: 'qwen2.5:3b', name: 'Qwen 2.5 3B' },
+  { code: 'exaone3.5:2.4b', name: 'EXAONE 3.5 2.4B' },
 ];
 
 export default function RegisterPage() {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import api from '@/lib/api';
@@ -9,8 +9,6 @@ import api from '@/lib/api';
 interface Message {
   id: string;
   role: 'user' | 'assistant';
-  provider?: string;
-  model?: string;
   content: string;
   createdAt: string;
 }
@@ -20,13 +18,17 @@ interface UserProfile {
   model: string | null;
 }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
 export default function ChatPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [input, setInput] = useState('');
+  const [streamingContent, setStreamingContent] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
+  const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
     queryKey: ['user'],
     queryFn: () => api.get('/user').then(r => r.data),
   });
@@ -37,22 +39,53 @@ const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
     enabled: !!userProfile?.model,
   });
 
-  const sendMutation = useMutation({
-    mutationFn: (content: string) => api.post('/chat', { content }).then(r => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['chat-history'] });
-      setInput('');
-    },
-  });
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, sendMutation.isPending]);
+  }, [messages, streamingContent]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || sendMutation.isPending) return;
-    sendMutation.mutate(input.trim());
+    if (!input.trim() || isStreaming) return;
+
+    const content = input.trim();
+    setInput('');
+    setIsStreaming(true);
+    setStreamingContent('');
+
+    const res = await fetch(`${API_URL}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ content }),
+    });
+
+    if (!res.ok || !res.body) {
+      setIsStreaming(false);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const lines = decoder.decode(value).split('\n').filter(l => l.startsWith('data: '));
+      for (const line of lines) {
+        const payload = line.slice(6);
+        if (payload === '[DONE]') {
+          setIsStreaming(false);
+          setStreamingContent('');
+          queryClient.invalidateQueries({ queryKey: ['chat-history'] });
+          return;
+        }
+        const { token } = JSON.parse(payload);
+        setStreamingContent(prev => prev + token);
+      }
+    }
+
+    setIsStreaming(false);
   };
 
   const handleLogout = async () => {
@@ -69,12 +102,8 @@ const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
       <header className="border-b bg-white px-4 py-3 flex items-center justify-between">
         <h1 className="font-bold text-lg">Bubbles</h1>
         <div className="flex gap-4 text-sm">
-          <Link href="/profile" className="text-gray-600 hover:text-black">
-            프로필
-          </Link>
-          <button onClick={handleLogout} className="text-gray-600 hover:text-black">
-            로그아웃
-          </button>
+          <Link href="/profile" className="text-gray-600 hover:text-black">프로필</Link>
+          <button onClick={handleLogout} className="text-gray-600 hover:text-black">로그아웃</button>
         </div>
       </header>
 
@@ -82,10 +111,7 @@ const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-4">
             <p className="text-gray-600">사용할 모델을 먼저 선택해주세요.</p>
-            <Link
-              href="/profile"
-              className="inline-block bg-black text-white px-4 py-2 rounded text-sm"
-            >
+            <Link href="/profile" className="inline-block bg-black text-white px-4 py-2 rounded text-sm">
               프로필에서 설정
             </Link>
           </div>
@@ -98,33 +124,28 @@ const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
             )}
             <div className="space-y-4">
               {messages.map(msg => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
+                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {msg.role === 'assistant' && (
                     <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mr-2 flex-shrink-0 self-end">
                       AI
                     </div>
                   )}
-                  <div
-                    className={`max-w-[75%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap ${
-                      msg.role === 'user'
-                        ? 'bg-black text-white rounded-br-sm'
-                        : 'bg-white border text-gray-800 rounded-bl-sm'
-                    }`}
-                  >
+                  <div className={`max-w-[75%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap ${
+                    msg.role === 'user'
+                      ? 'bg-black text-white rounded-br-sm'
+                      : 'bg-white border text-gray-800 rounded-bl-sm'
+                  }`}>
                     {msg.content}
                   </div>
                 </div>
               ))}
-              {sendMutation.isPending && (
+              {isStreaming && (
                 <div className="flex justify-start">
                   <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mr-2 flex-shrink-0 self-end">
                     AI
                   </div>
-                  <div className="bg-white border rounded-2xl rounded-bl-sm px-4 py-2 text-sm text-gray-400">
-                    ...
+                  <div className="bg-white border rounded-2xl rounded-bl-sm px-4 py-2 text-sm whitespace-pre-wrap text-gray-800 max-w-[75%]">
+                    {streamingContent || <span className="text-gray-400">...</span>}
                   </div>
                 </div>
               )}
@@ -137,18 +158,12 @@ const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
               <input
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSubmit(e);
-                  }
-                }}
                 placeholder="메시지를 입력하세요..."
                 className="flex-1 border rounded-full px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-black"
               />
               <button
                 type="submit"
-                disabled={!input.trim() || sendMutation.isPending}
+                disabled={!input.trim() || isStreaming}
                 className="bg-black text-white rounded-full px-4 py-2 text-sm disabled:opacity-50"
               >
                 전송

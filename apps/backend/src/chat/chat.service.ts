@@ -1,4 +1,5 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
+import { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { ModelService } from '../model/model.service';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -10,7 +11,7 @@ export class ChatService {
     private modelService: ModelService,
   ) {}
 
-  async sendMessage(userId: string, dto: SendMessageDto) {
+  async sendMessageStream(userId: string, dto: SendMessageDto, res: Response) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user?.model) throw new ForbiddenException('No model selected');
 
@@ -29,23 +30,24 @@ export class ChatService {
       content: m.content,
     }));
 
-    const response = await this.modelService.chat(userId, messages);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    let fullContent = '';
+    const { model, provider } = await this.modelService.getModelInfo(userId);
+
+    for await (const token of this.modelService.chatStream(userId, messages)) {
+      fullContent += token;
+      res.write(`data: ${JSON.stringify({ token })}\n\n`);
+    }
 
     await this.prisma.message.create({
-      data: {
-        user_id: userId,
-        role: 'assistant',
-        provider: response.provider,
-        model: response.model,
-        content: response.content,
-      },
+      data: { user_id: userId, role: 'assistant', provider, model, content: fullContent },
     });
 
-    return {
-      content: response.content,
-      provider: response.provider,
-      model: response.model,
-    };
+    res.write(`data: [DONE]\n\n`);
+    res.end();
   }
 
   async getHistory(userId: string) {

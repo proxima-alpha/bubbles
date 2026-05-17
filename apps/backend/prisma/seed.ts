@@ -28,8 +28,8 @@ async function main() {
     { category_code: 'provider', code: 'ollama', name: 'Ollama', order: 1 },
     {
       category_code: 'model',
-      code: 'qwen2.5:3b',
-      name: 'Qwen 2.5 3B',
+      code: 'exaone3.5:2.4b',
+      name: 'EXAONE 3.5 2.4B',
       parent_category_code: 'provider',
       parent_code: 'ollama',
       order: 1,

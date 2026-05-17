@@ -1,5 +1,6 @@
-import { Controller, Post, Get, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards, Request, Res } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import type { Response } from 'express';
 import { ChatService } from './chat.service';
 import { SendMessageDto } from './dto/send-message.dto';
 
@@ -8,9 +9,9 @@ import { SendMessageDto } from './dto/send-message.dto';
 export class ChatController {
   constructor(private readonly chatService: ChatService) {}
 
-  @Post()
-  sendMessage(@Request() req: any, @Body() dto: SendMessageDto) {
-    return this.chatService.sendMessage(req.user.id, dto);
+  @Post('stream')
+  sendMessageStream(@Request() req: any, @Body() dto: SendMessageDto, @Res() res: Response) {
+    return this.chatService.sendMessageStream(req.user.id, dto, res);
   }
 
   @Get('history')

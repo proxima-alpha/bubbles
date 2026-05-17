@@ -149,7 +149,7 @@ bubbles/
 - [x] (3) Next.js 프로젝트 초기화
 - [x] (4) DB 설계 및 마이그레이션
 - [x] (5) 인증 구현 (JWT)
-- [x] (6) LLM 연동 (Ollama 로컬 모델 우선 — `qwen2.5:3b`, 외부 API는 Spec 4에서)
+- [x] (6) LLM 연동 (Ollama 로컬 모델 우선 — `exaone3.5:2.4b`, 외부 API는 Spec 4에서)
 - [x] (7) 기본 Chat UI (model null이면 모델 선택 화면 조건부 표시)
 - [x] (8) Profile UI (본인 정보 변경, model 변경, API 키 변경)
 
