@@ -35,7 +35,7 @@ export default function ChatPage() {
 
   const { data: messages = [], isLoading: historyLoading } = useQuery<Message[]>({
     queryKey: ['chat-history'],
-    queryFn: () => api.get('/chat/history').then(r => r.data),
+    queryFn: () => api.get('/chat/history').then(r => [...r.data].reverse()),
     enabled: !!userProfile?.model,
   });
 

@@ -53,7 +53,7 @@ export class ChatService {
   async getHistory(userId: string) {
     const messages = await this.prisma.message.findMany({
       where: { user_id: userId },
-      orderBy: { created_at: 'asc' },
+      orderBy: { created_at: 'desc' },
     });
 
     return messages.map(m => ({

@@ -30,7 +30,7 @@ describe('ChatService', () => {
   });
 
   describe('getHistory', () => {
-    it('유저의 메시지 목록이 created_at 오름차순으로 반환되어야 한다', async () => {
+    it('유저의 메시지 목록이 created_at 내림차순으로 반환되어야 한다', async () => {
       const rows = [
         { id: '1', role: 'user', provider: null, model: null, content: 'hi', created_at: new Date('2024-01-01') },
         { id: '2', role: 'assistant', provider: 'ollama', model: 'exaone3.5:2.4b', content: 'hello', created_at: new Date('2024-01-02') },
@@ -41,7 +41,7 @@ describe('ChatService', () => {
 
       expect(mockPrisma.message.findMany).toHaveBeenCalledWith({
         where: { user_id: 'u1' },
-        orderBy: { created_at: 'asc' },
+        orderBy: { created_at: 'desc' },
       });
       expect(result).toHaveLength(2);
       expect(result[0]).toMatchObject({ id: '1', role: 'user', content: 'hi' });
