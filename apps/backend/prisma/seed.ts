@@ -12,6 +12,7 @@ async function main() {
     { code: 'model', name: 'LLM 모델 버전', order: 3 },
     { code: 'memory_type', name: '메모리 유형', order: 4 },
     { code: 'memory_history_type', name: '메모리 히스토리 유형', order: 5 },
+    { code: 'schedule_type', name: '스케줄 유형', order: 6 },
   ];
 
   for (const cat of categories) {
@@ -40,6 +41,7 @@ async function main() {
     { category_code: 'memory_history_type', code: 'renewed', name: '시스템 자동 수정', order: 2 },
     { category_code: 'memory_history_type', code: 'uploaded', name: '이용자 수동 업로드', order: 3 },
     { category_code: 'memory_history_type', code: 'modified', name: '이용자 수동 수정', order: 4 },
+    { category_code: 'schedule_type', code: 'memory_batch', name: '메모리 배치', order: 1 },
   ];
 
   for (const code of codes) {

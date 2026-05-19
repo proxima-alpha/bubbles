@@ -51,6 +51,7 @@ model user {
   license_keys license_key[]
   messages     message[]
   memories     memory[]
+  schedules    schedule[]
 }
 
 model license_key {
@@ -77,6 +78,8 @@ model message {
   model_category    String                     @default("model") @db.VarChar
   model             String?                    @db.VarChar
   content           String                     @db.Text
+  input_tokens      Int?
+  output_tokens     Int?
   embedding         Unsupported("vector(768)")?
   is_proceeded      Boolean                    @default(false)
   created_at        DateTime                   @default(now()) @db.Timestamptz
@@ -94,10 +97,26 @@ model memory {
   type                  String    @db.VarChar
   history_type_category String    @default("memory_history_type") @db.VarChar
   history_type          String?   @db.VarChar
-  keywords              String[]
   version               Int       @default(1)
+  score                 Float     @default(0)
+  sensitivity           Float     @default(0)
+  importance            Float     @default(0)
+  durability            Float     @default(0)
+  reusefulness          Float     @default(0)
+  explicit_signal       Float     @default(0)
+  repetition_strength   Float     @default(0)
+  user_action_score     Float     @default(0)
+  llm_confidence_hint   Float     @default(0)
+  confirmed_score       Float     @default(0)
+  temporary_penalty     Float     @default(0)
+  content               String?   @db.Text
+  summary               String?   @db.Text
+  reference_count       Int       @default(0)
+  embedding             Unsupported("vector(768)")?
   is_pinned             Boolean   @default(false)
   is_active             Boolean   @default(true)
+  scored_at             DateTime? @db.Timestamptz
+  last_referenced_at    DateTime? @db.Timestamptz
   deactivated_at        DateTime? @db.Timestamptz
   created_at            DateTime  @default(now()) @db.Timestamptz
   updated_at            DateTime  @default(now()) @updatedAt @db.Timestamptz
@@ -108,6 +127,7 @@ model memory {
   parent_memory  memory?  @relation("memory_parent", fields: [parent_memory_id], references: [id])
   newer_memories memory[] @relation("memory_parent")
   contents       memory_content[]
+  keywords       memory__keyword[]
 }
 
 model memory_content {
@@ -130,4 +150,36 @@ model memory_content__message {
 
   memory_content memory_content @relation(fields: [memory_content_id], references: [id])
   message        message        @relation(fields: [message_id], references: [id])
+}
+
+model keyword {
+  code        String   @id @db.VarChar
+  name        String   @db.VarChar
+  description String?  @db.Text
+  created_at  DateTime @default(now()) @db.Timestamptz
+
+  memory__keyword memory__keyword[]
+}
+
+model memory__keyword {
+  memory_id    String @db.Uuid
+  keyword_code String @db.VarChar
+
+  @@id([memory_id, keyword_code])
+
+  memory  memory  @relation(fields: [memory_id], references: [id])
+  keyword keyword @relation(fields: [keyword_code], references: [code])
+}
+
+model schedule {
+  id            String   @id @default(uuid()) @db.Uuid
+  user_id       String   @db.Uuid
+  type_category String   @default("schedule_type") @db.VarChar
+  type          String   @db.VarChar
+  created_at    DateTime @default(now()) @db.Timestamptz
+  updated_at    DateTime @default(now()) @db.Timestamptz
+
+  @@unique([user_id, type])
+
+  user user @relation(fields: [user_id], references: [id])
 }
