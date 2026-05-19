@@ -35,8 +35,8 @@ services:
   clustering:
     build:
       context: ./apps/clustering
-    stdin_open: true
-    tty: true
+    ports:
+      - "8000:8000"
 
   backend:
     build:

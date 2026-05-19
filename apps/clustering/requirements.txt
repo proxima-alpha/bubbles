@@ -1,3 +1,5 @@
+fastapi
+uvicorn[standard]
 hdbscan
 numpy
 scikit-learn
