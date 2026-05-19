@@ -39,8 +39,8 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
 - knowledge memory 수동 편집/고정(pin)/삭제 가능
 - knowledge memory 삭제 시 해당 memory를 참조하는 relation은 제거 — messages 자체는 영구 보관
 - 모든 knowledge memory 변경 시 history 적재 — 변경 주체(system: 스케줄러 자동 업데이트 / user: 직접 수정) 기록
-- **점수 산정 기준**: `0.25 * importance + 0.25 * durability + 0.20 * reusefulness + 0.20 * confirmed - 0.30 * sensitivity - 0.30 * temporary_penalty` (각 항목은 0~1 범위, 최종 score도 0~1로 정규화; recency는 RAG 조회 시 정렬에만 동적 반영)
-  - `importance`는 클러스터 크기 반영: `importance += log(cluster_size)` 후 정규화
+- **점수 산정 기준**: `0.25 * importance + 0.25 * durability + 0.20 * reusefulness + 0.20 * confirmed_score + 0.10 * recency - 0.30 * sensitivity - 0.30 * temporary_penalty` (각 항목은 0~1 범위, 최종 score도 clamp(0, 1); recency는 배치 실행 시점 last_referenced_at 기준 계산값)
+  - `importance`는 클러스터 크기 반영: `importance += log(cluster_size)` 후 clamp(0, 1)
 - **confirmed**: LLM이 단독으로 부여하는 정적 점수가 아닌 누적 계산값
   - `0.4 * explicit_signal + 0.3 * repetition_score + 0.2 * user_action_score + 0.1 * llm_confidence_hint`
   - `explicit_signal`: 사용자 발화의 확정성 ("~로 정했어" → 높음, "~할까?" → 낮음)

@@ -8,7 +8,7 @@
 
 ## 태스크
 
-- [ ] (1) DB 마이그레이션: memory 스코어 컬럼 + embedding 추가, message 토큰 사용량 컬럼 추가
+- [ ] (1) DB 마이그레이션: memory 점수 컴포넌트 컬럼 + score + embedding 추가, message 토큰 사용량 컬럼 추가
 - [ ] (2) Ollama 임베딩 연동 (message 저장 시 embedding 생성, 실패 시 재시도 후 에러 반환)
 - [ ] (3) 스케줄러 기반 구조 + 트리거 조건
 - [ ] (4) clustering FastAPI 서버 구현 (HDBSCAN)
@@ -40,6 +40,8 @@ model memory {
 
   // Spec 2 추가
   embedding           Unsupported("vector(768)")?
+  score               Float     @default(0)      // 배치 시 계산하여 저장
+  scored_at           DateTime? @db.Timestamptz  // score가 계산된 시각
   sensitivity         Float  @default(0)
   importance          Float  @default(0)
   durability          Float  @default(0)
@@ -71,17 +73,22 @@ model message {
 
 Ollama 스트리밍 응답의 마지막 청크(`data.done === true`)에 `prompt_eval_count`(입력), `eval_count`(출력) 필드가 포함됨. `ollama.provider.ts`에서 추출해 `ChatService`로 반환.
 
-> **score 산정 공식** (plan.md 기준) — DB에 저장하지 않고 동적 계산:
-> `0.25*importance + 0.25*durability + 0.20*reusefulness + 0.20*confirmed_score - 0.30*sensitivity - 0.30*temporary_penalty`
+> **score 산정 공식** (plan.md 기준) — 배치 시 계산하여 `score` + `scored_at` DB 저장:
+> `0.25*importance + 0.25*durability + 0.20*reusefulness + 0.20*confirmed_score + 0.10*recency - 0.30*sensitivity - 0.30*temporary_penalty`
 >
 > confirmed_score = `0.4*explicit_signal + 0.3*repetition_score + 0.2*user_action_score + 0.1*llm_confidence_hint`
+> repetition_score = `min(1, log(1 + repetition_count) / log(1 + max_reference))`
+> - `max_reference`: `.env REPETITION_MAX_REFERENCE=20`. 0이면 repetition_score = 0
 >
-> recency (RAG 정렬 보정용, 저장하지 않음):
+> recency는 배치 실행 시점의 `last_referenced_at` 기준으로 계산 (당시 값으로 고정):
 > ```
-> days = (now - last_referenced_at) in days   // last_referenced_at이 null이면 created_at 사용
+> days = (scored_at 시점의 now - last_referenced_at) in days   // null이면 created_at 사용
 > recency = exp(-days / RECENCY_DECAY_FACTOR)  // .env: RECENCY_DECAY_FACTOR=30
 > ```
-> score는 배치 시 컴포넌트 값으로 앱 코드에서 계산. 승격 조건 판단 등에 사용하며 DB에 별도 컬럼으로 저장하지 않음.
+>
+> **clamp 규칙**: 모든 컴포넌트 값(LLM 반환값 및 계산값)은 사용 전 `[0.0, 1.0]`으로 clamp.
+> 최종 score도 `clamp(계산값, 0.0, 1.0)` 적용 후 저장.
+> 계산된 score와 scored_at을 함께 저장. score는 승격 조건·정렬에 사용.
 
 ### schedule 테이블 신규 생성
 
@@ -202,24 +209,35 @@ void this.modelService.embedText(fullContent)
   .catch(e => console.error('assistant embed failed', e));
 ```
 
+> **TODO**: assistant message 임베딩 실패 시 해당 메시지는 스케줄러에서 영구 제외됨 (`embedding IS NULL` 조건). 추후 실패 메시지 분류/재처리 메커니즘 필요 — 예: `message.embedding_failed_at` 컬럼 추가 후 실패 시 기록, 별도 재시도 배치에서 처리.
+
 ---
 
 ## 3. 스케줄러 구조
 
-### 환경변수 (.env 추가)
+### 환경변수 (.env + .env.example 추가)
 
 ```bash
-# Scheduler: 미처리 메시지가 이 수 이상 쌓이면 배치 실행
-SCHEDULER_MESSAGE_THRESHOLD=5
+# Scheduler
+SCHEDULER_MESSAGE_THRESHOLD=5       # 미처리 메시지가 이 수 이상이면 배치 실행
+SCHEDULER_BATCH_INTERVAL_HOURS=24   # 마지막 배치 후 이 시간 이상 경과하면 재실행
 
-# RAG: 컨텍스트에 주입할 knowledge memory 수
-RAG_TOP_K=5
+# RAG
+RAG_TOP_K=5                         # 컨텍스트에 주입할 knowledge memory 수
+RECENCY_DECAY_FACTOR=30             # recency 감쇠 계수 (일 단위)
+REPETITION_MAX_REFERENCE=20         # repetition_score 정규화 기준값
 
-# Clustering service URL
+# Clustering
 CLUSTERING_URL=http://clustering:8000
+HDBSCAN_MIN_CLUSTER_SIZE=2          # HDBSCAN 최소 클러스터 크기
 
-# Recency 감쇠 계수 (일 단위, 클수록 천천히 감쇠)
-RECENCY_DECAY_FACTOR=30
+# Memory merge 조건
+MERGE_MAX_SIMILARITY=0.8            # 기존 memory와 centroid 간 최대 similarity 임계값
+MERGE_AVG_SIMILARITY=0.7            # 클러스터 내부 평균 similarity 임계값
+
+# Memory 승격 조건
+PROMOTION_SCORE_THRESHOLD=0.9       # main memory 승격 score 임계값
+PROMOTION_SENSITIVITY_THRESHOLD=0.3 # main memory 승격 sensitivity 임계값
 ```
 
 ### 패키지 추가
@@ -262,7 +280,8 @@ async checkAndRun() {
   const usersOverDay = await this.prisma.$queryRaw<{ user_id: string }[]>`
     SELECT u.id AS user_id FROM "user" u
     LEFT JOIN schedule s ON s.user_id = u.id AND s.type = 'memory_batch'
-    WHERE (s.id IS NULL OR s.updated_at < NOW() - INTERVAL '1 day')
+    WHERE (s.id IS NULL OR s.updated_at < NOW() - (${intervalHours} || ' hours')::interval)
+    -- intervalHours = SCHEDULER_BATCH_INTERVAL_HOURS (default 24)
       AND EXISTS (
         SELECT 1 FROM message m
         WHERE m.user_id = u.id AND m.is_proceeded = false AND m.embedding IS NOT NULL
@@ -312,13 +331,14 @@ app = FastAPI()
 class ClusterRequest(BaseModel):
     vectors: list[list[float]]
     ids: list[str]
+    min_cluster_size: int = 2
 
 @app.post("/cluster")
 def cluster(req: ClusterRequest):
     vectors = np.array(req.vectors)
     ids = req.ids
 
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=2, metric='cosine')
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=req.min_cluster_size, metric='cosine')
     labels = clusterer.fit_predict(vectors)
 
     clusters: dict[int, list[str]] = {}
@@ -373,10 +393,11 @@ clustering:
 // scheduler.service.ts
 private async runClustering(vectors: number[][], ids: string[]) {
   const url = this.config.get('CLUSTERING_URL', 'http://clustering:8000');
+  const minClusterSize = this.config.get<number>('HDBSCAN_MIN_CLUSTER_SIZE', 2);
   const res = await fetch(`${url}/cluster`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ vectors, ids }),
+    body: JSON.stringify({ vectors, ids, min_cluster_size: minClusterSize }),
   });
   if (!res.ok) throw new Error(`Clustering error: ${res.status}`);
   return res.json();
@@ -389,24 +410,40 @@ private async runClustering(vectors: number[][], ids: string[]) {
 
 ### 로직 흐름
 
-`runBatch(userId)`는 아래를 수행하고 생성/merge된 memory 목록을 반환한다.
-score는 컴포넌트 값으로 앱 코드에서 계산하여 포함:
+`runBatch(userId)`는 아래를 수행하고 생성/merge된 memory 목록을 반환한다:
 `Promise<{ id: string; is_pinned: boolean; score: number; sensitivity: number }[]>`
-(score는 저장되지 않는 동적 계산값 — 승격 조건 판단 후 버려짐)
 
 ```
 각 클러스터에 대해:
-  1. 클러스터 centroid 계산 (벡터 평균)
+  1. 클러스터 centroid 계산 (클러스터 내 message embeddings 평균)
   2. 기존 knowledge memories embedding과 cosine similarity 계산
      (pgvector: 1 - (embedding <=> centroid::vector))
-  3. max_similarity >= 0.8 AND 클러스터 내부 avg_similarity >= 0.7
-     → merge: 새 memory_content 추가, version+1, embedding 재계산
+  3. max_similarity >= MERGE_MAX_SIMILARITY (default 0.8)
+     AND 클러스터 내부 avg_similarity >= MERGE_AVG_SIMILARITY (default 0.7)
+         (= 클러스터 내 각 message embedding과 centroid 간 cosine similarity 평균)
+     → merge: 새 memory_content 추가, version+1
+              embedding 재계산: 기존 memory와 연결된 messages + 신규 클러스터 messages
+              전체를 합산한 embeddings의 centroid로 재계산
   4. 조건 미충족
      → 신규 knowledge memory + memory_content 생성
-  5. LLM 호출 (클러스터 수만큼 병렬): keywords + 점수 요소 산정
-  6. 포함 messages: is_proceeded = true, memory_content__message FK 연결
-  7. 노이즈: is_proceeded = false 유지 (다음 배치에서 재처리)
+  5. LLM 호출 (클러스터 수만큼 병렬, user.model 사용): keywords + 점수 요소 산정
+     입력: 이번 배치의 신규 클러스터 messages만 (merge 케이스도 동일 — 기존 history 제외)
+  5a. LLM 반환 importance: `importance += log(cluster_size)` 후 clamp(0, 1)
+  6. score 계산 후 memory에 저장 (score, scored_at, confirmed_score 등 컴포넌트)
+  7. 포함 messages: is_proceeded = true, memory_content__message FK 연결
+  8. 노이즈: is_proceeded = false 유지 (다음 배치에서 재처리)
 반환: 위에서 생성/merge된 memory rows (id, is_pinned, score, sensitivity)
+```
+
+### 단일 메시지 케이스 (미처리 메시지 수 < HDBSCAN_MIN_CLUSTER_SIZE)
+
+clustering 서버 호출 없이 메시지 embedding을 기존 knowledge memories와 직접 비교:
+
+```
+1. 메시지 embedding과 기존 knowledge memories 간 cosine similarity 계산
+2. max_similarity >= MERGE_MAX_SIMILARITY → merge (MERGE_AVG_SIMILARITY 조건 생략)
+3. 미충족 → 신규 knowledge memory 생성
+4. 이후 steps 5a–7 동일 (cluster_size = 1이므로 log(1) = 0, importance 보정 없음)
 ```
 
 ### LLM 프롬프트 (키워드 + 점수 산정)
@@ -414,7 +451,7 @@ score는 컴포넌트 값으로 앱 코드에서 계산하여 포함:
 ```
 다음 대화 내용을 분석하여 JSON으로만 응답하세요.
 
-{messages_content}
+{memory.content}  // 클러스터 messages의 원문 합산 텍스트 (memory_content들을 순서대로 join)
 
 {
   "keywords": ["키워드1", "키워드2"],
@@ -443,11 +480,13 @@ score는 컴포넌트 값으로 앱 코드에서 계산하여 포함:
 이번 배치(batchResults)에서 생성/merge된 knowledge memories 중 승격 조건을 만족하는 게 1개 이상일 때만 실행. 없으면 스킵.
 
 ```typescript
-// batchResults: runBatch()의 반환값 — score는 배치 시 동적 계산값 (DB 미저장)
+// batchResults: runBatch()의 반환값
 // type: { id: string; is_pinned: boolean; score: number; sensitivity: number }[]
 async updateMainMemory(userId: string, batchResults: { id: string; is_pinned: boolean; score: number; sensitivity: number }[]) {
+  const scoreThreshold = this.config.get<number>('PROMOTION_SCORE_THRESHOLD', 0.9);
+  const sensitivityThreshold = this.config.get<number>('PROMOTION_SENSITIVITY_THRESHOLD', 0.3);
   const newlyPromoted = batchResults.filter(m =>
-    m.is_pinned || (m.score > 0.9 && m.sensitivity <= 0.3)
+    m.is_pinned || (m.score > scoreThreshold && m.sensitivity <= sensitivityThreshold)
   );
   if (newlyPromoted.length === 0) return;
 ```
@@ -464,7 +503,7 @@ const promoted = await this.prisma.memory.findMany({
     is_active: true,
     OR: [
       { is_pinned: true },
-      { AND: [{ score: { gt: 0.9 } }, { sensitivity: { lte: 0.3 } }] },
+      { AND: [{ score: { gt: scoreThreshold } }, { sensitivity: { lte: sensitivityThreshold } }] },
     ],
   },
 });
@@ -472,11 +511,22 @@ const promoted = await this.prisma.memory.findMany({
 
 ### LLM 프롬프트 (main memory 재생성)
 
+첫 생성 시 "[기존 기억]" 섹션 생략:
+```
+다음은 사용자에 대해 알려진 정보입니다.
+
+[새로 추가된 지식]
+{promoted.map(m => m.summary).join('\n---\n')}
+
+위 내용을 바탕으로 사용자를 잘 아는 AI가 기억해야 할 핵심 정보를 압축하여 작성하세요.
+```
+
+갱신 시 기존 기억 포함:
 ```
 다음은 사용자에 대해 알려진 정보입니다.
 
 [기존 기억]
-{current_main_memory_content}
+{getActiveMainMemory() 반환값 — memory.summary}
 
 [새로 추가된 지식]
 {promoted.map(m => m.summary).join('\n---\n')}
@@ -486,6 +536,11 @@ const promoted = await this.prisma.memory.findMany({
 
 ### DB 처리
 
+첫 생성 (기존 main memory 없음):
+- 새 memory: `type = 'main'`, `history_type = 'renewed'`, `version = 1`
+  - `root_memory_id`: null, `parent_memory_id`: null
+
+갱신 (기존 main memory 있음):
 - 기존 main memory: `is_active = false`, `deactivated_at = now()`
 - 새 memory: `type = 'main'`, `history_type = 'renewed'`, `version = 기존+1`
   - `root_memory_id`: null (null이면 본인이 root로 처리)
@@ -592,17 +647,3 @@ GET /memory/knowledge   → KnowledgeMemory[]
 - 카드 목록: 키워드 배지 + 날짜
 - 삭제/편집은 Spec 3
 
----
-
-## .env.example 추가 항목
-
-```bash
-# Scheduler: 미처리 메시지가 이 수 이상 쌓이면 배치 실행
-SCHEDULER_MESSAGE_THRESHOLD=5
-
-# RAG: 컨텍스트에 주입할 knowledge memory 수
-RAG_TOP_K=5
-
-# Clustering FastAPI 서버 URL
-CLUSTERING_URL=http://clustering:8000
-```
