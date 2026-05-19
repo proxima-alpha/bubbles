@@ -32,11 +32,17 @@
 
 ## 1. DB 마이그레이션
 
-### memory 테이블 추가 컬럼
+### memory 테이블 변경
 
+`keywords varchar[]` 컬럼 제거 (keyword 테이블로 대체):
+```sql
+ALTER TABLE memory DROP COLUMN keywords;
+```
+
+추가 컬럼:
 ```prisma
 model memory {
-  // 기존 컬럼 유지 ...
+  // 기존 컬럼 유지 (keywords 제거) ...
 
   // Spec 2 추가
   embedding           Unsupported("vector(768)")?
@@ -89,6 +95,29 @@ Ollama 스트리밍 응답의 마지막 청크(`data.done === true`)에 `prompt_
 > **clamp 규칙**: 모든 컴포넌트 값(LLM 반환값 및 계산값)은 사용 전 `[0.0, 1.0]`으로 clamp.
 > 최종 score도 `clamp(계산값, 0.0, 1.0)` 적용 후 저장.
 > 계산된 score와 scored_at을 함께 저장. score는 승격 조건·정렬에 사용.
+
+### keyword + memory__keyword 테이블 신규 생성
+
+```prisma
+model keyword {
+  code        String   @id @db.VarChar
+  name        String   @db.VarChar
+  description String?  @db.Text
+  created_at  DateTime @default(now()) @db.Timestamptz
+
+  memory__keyword memory__keyword[]
+}
+
+model memory__keyword {
+  memory_id    String @db.Uuid
+  keyword_code String @db.VarChar
+
+  memory  memory  @relation(fields: [memory_id], references: [id])
+  keyword keyword @relation(fields: [keyword_code], references: [code])
+
+  @@id([memory_id, keyword_code])
+}
+```
 
 ### schedule 테이블 신규 생성
 
@@ -230,10 +259,12 @@ REPETITION_MAX_REFERENCE=20         # repetition_score 정규화 기준값
 # Clustering
 CLUSTERING_URL=http://clustering:8000
 HDBSCAN_MIN_CLUSTER_SIZE=2          # HDBSCAN 최소 클러스터 크기
+MAX_CLUSTER_SIZE=50                 # cluster_size_score 정규화 기준값
 
 # Memory merge 조건
 MERGE_MAX_SIMILARITY=0.8            # 기존 memory와 centroid 간 최대 similarity 임계값
 MERGE_AVG_SIMILARITY=0.7            # 클러스터 내부 평균 similarity 임계값
+REPETITION_SIMILARITY_THRESHOLD=0.6 # repetition_count 증가 기준 similarity
 
 # Memory 승격 조건
 PROMOTION_SCORE_THRESHOLD=0.9       # main memory 승격 score 임계값
@@ -266,6 +297,7 @@ src/memory/
 @Cron('* * * * *')
 async checkAndRun() {
   const threshold = this.config.get<number>('SCHEDULER_MESSAGE_THRESHOLD', 5);
+  const intervalHours = this.config.get<number>('SCHEDULER_BATCH_INTERVAL_HOURS', 24);
 
   // 조건 1: 미처리 messages >= N인 유저
   const usersOverThreshold = await this.prisma.$queryRaw<{ user_id: string }[]>`
@@ -281,7 +313,6 @@ async checkAndRun() {
     SELECT u.id AS user_id FROM "user" u
     LEFT JOIN schedule s ON s.user_id = u.id AND s.type = 'memory_batch'
     WHERE (s.id IS NULL OR s.updated_at < NOW() - (${intervalHours} || ' hours')::interval)
-    -- intervalHours = SCHEDULER_BATCH_INTERVAL_HOURS (default 24)
       AND EXISTS (
         SELECT 1 FROM message m
         WHERE m.user_id = u.id AND m.is_proceeded = false AND m.embedding IS NOT NULL
@@ -421,17 +452,28 @@ private async runClustering(vectors: number[][], ids: string[]) {
   3. max_similarity >= MERGE_MAX_SIMILARITY (default 0.8)
      AND 클러스터 내부 avg_similarity >= MERGE_AVG_SIMILARITY (default 0.7)
          (= 클러스터 내 각 message embedding과 centroid 간 cosine similarity 평균)
-     → merge: 새 memory_content 추가, version+1
-              embedding 재계산: 기존 memory와 연결된 messages + 신규 클러스터 messages
-              전체를 합산한 embeddings의 centroid로 재계산
+     → merge: 기존 memory is_active=false, deactivated_at=now()
+              신규 memory row 생성: type='knowledge', history_type='renewed',
+                version=기존+1, parent_memory_id=기존 id,
+                root_memory_id=기존 root_memory_id (null이면 기존 id)
+              기존 memory_contents → 신규 memory_id로 재귀속 (UPDATE memory_content SET memory_id)
+              신규 클러스터 messages로 memory_content 추가
+              embedding 재계산: 모든 연결 messages embeddings의 centroid
   4. 조건 미충족
      → 신규 knowledge memory + memory_content 생성
   5. LLM 호출 (클러스터 수만큼 병렬, user.model 사용): keywords + 점수 요소 산정
-     입력: 이번 배치의 신규 클러스터 messages만 (merge 케이스도 동일 — 기존 history 제외)
-  5a. LLM 반환 importance: `importance += log(cluster_size)` 후 clamp(0, 1)
+     입력: 신규 memory → 이번 배치 클러스터 messages만 / merge → memory.content 전체 (기존 + 신규)
+  5a. LLM 반환 importance 보정:
+      cluster_size_score = min(1, log(1 + cluster_size) / log(1 + MAX_CLUSTER_SIZE))
+      importance = clamp(importance + 0.15 * cluster_size_score, 0, 1)
+      (.env: MAX_CLUSTER_SIZE=50)
   6. score 계산 후 memory에 저장 (score, scored_at, confirmed_score 등 컴포넌트)
+     + LLM 반환 keywords → keyword 테이블 upsert + memory__keyword 연결
   7. 포함 messages: is_proceeded = true, memory_content__message FK 연결
-  8. 노이즈: is_proceeded = false 유지 (다음 배치에서 재처리)
+  8. 노이즈: 즉시 단일 메시지 케이스 로직 적용 → is_proceeded = true
+  9. repetition_count 갱신: 이번 배치에서 is_proceeded = true된 messages의 embedding과
+     전체 knowledge memories embedding 비교.
+     similarity >= REPETITION_SIMILARITY_THRESHOLD인 memory마다 repetition_count + 1
 반환: 위에서 생성/merge된 memory rows (id, is_pinned, score, sensitivity)
 ```
 
@@ -441,9 +483,9 @@ clustering 서버 호출 없이 메시지 embedding을 기존 knowledge memories
 
 ```
 1. 메시지 embedding과 기존 knowledge memories 간 cosine similarity 계산
-2. max_similarity >= MERGE_MAX_SIMILARITY → merge (MERGE_AVG_SIMILARITY 조건 생략)
+2. max_similarity >= MERGE_MAX_SIMILARITY → merge (MERGE_AVG_SIMILARITY 조건 생략, 신규 row 생성 동일)
 3. 미충족 → 신규 knowledge memory 생성
-4. 이후 steps 5a–7 동일 (cluster_size = 1이므로 log(1) = 0, importance 보정 없음)
+4. 이후 steps 5a–7 동일 (cluster_size = 1이므로 cluster_size_score ≈ 0, importance 보정 없음)
 ```
 
 ### LLM 프롬프트 (키워드 + 점수 산정)
