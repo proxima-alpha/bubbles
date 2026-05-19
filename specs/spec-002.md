@@ -53,7 +53,7 @@ model memory {
   durability          Float  @default(0)
   reusefulness        Float  @default(0)
   explicit_signal     Float  @default(0)
-  repetition_count    Int    @default(0)
+  repetition_strength Float  @default(0)  // 반복 강도 (0~1, 감쇠 + 유사도 누적)
   user_action_score   Float  @default(0)
   llm_confidence_hint Float  @default(0)
   confirmed_score     Float  @default(0)
@@ -82,9 +82,8 @@ Ollama 스트리밍 응답의 마지막 청크(`data.done === true`)에 `prompt_
 > **score 산정 공식** (plan.md 기준) — 배치 시 계산하여 `score` + `scored_at` DB 저장:
 > `0.25*importance + 0.25*durability + 0.20*reusefulness + 0.20*confirmed_score + 0.10*recency - 0.30*sensitivity - 0.30*temporary_penalty`
 >
-> confirmed_score = `0.4*explicit_signal + 0.3*repetition_score + 0.2*user_action_score + 0.1*llm_confidence_hint`
-> repetition_score = `min(1, log(1 + repetition_count) / log(1 + max_reference))`
-> - `max_reference`: `.env REPETITION_MAX_REFERENCE=20`. 0이면 repetition_score = 0
+> confirmed_score = `0.4*explicit_signal + 0.3*repetition_strength + 0.2*user_action_score + 0.1*llm_confidence_hint`
+> repetition_strength: 이미 [0,1] 범위 — 직접 사용
 >
 > recency는 배치 실행 시점의 `last_referenced_at` 기준으로 계산 (당시 값으로 고정):
 > ```
@@ -254,7 +253,6 @@ SCHEDULER_BATCH_INTERVAL_HOURS=24   # 마지막 배치 후 이 시간 이상 경
 # RAG
 RAG_TOP_K=5                         # 컨텍스트에 주입할 knowledge memory 수
 RECENCY_DECAY_FACTOR=30             # recency 감쇠 계수 (일 단위)
-REPETITION_MAX_REFERENCE=20         # repetition_score 정규화 기준값
 
 # Clustering
 CLUSTERING_URL=http://clustering:8000
@@ -264,7 +262,7 @@ MAX_CLUSTER_SIZE=50                 # cluster_size_score 정규화 기준값
 # Memory merge 조건
 MERGE_MAX_SIMILARITY=0.8            # 기존 memory와 centroid 간 최대 similarity 임계값
 MERGE_AVG_SIMILARITY=0.7            # 클러스터 내부 평균 similarity 임계값
-REPETITION_SIMILARITY_THRESHOLD=0.6 # repetition_count 증가 기준 similarity
+REPETITION_SIMILARITY_THRESHOLD=0.6 # repetition_strength 갱신 대상 최소 similarity
 
 # Memory 승격 조건
 PROMOTION_SCORE_THRESHOLD=0.9       # main memory 승격 score 임계값
@@ -284,7 +282,20 @@ src/memory/
 ├── memory.module.ts
 ├── memory.service.ts     # knowledge/main memory CRUD + RAG 조회
 ├── scheduler.service.ts  # 트리거 체크 + 배치 오케스트레이션
+├── decay.scheduler.ts    # 매일 00:00 UTC repetition_strength 감쇠
 └── dto/
+```
+
+`decay.scheduler.ts`: 매일 00:00 UTC, 전체 active knowledge memories에 decay 적용:
+```typescript
+@Cron('0 0 * * *')
+async applyDecay() {
+  await this.prisma.$executeRaw`
+    UPDATE memory
+    SET repetition_strength = GREATEST(0, LEAST(1, repetition_strength * 0.995))
+    WHERE type = 'knowledge' AND is_active = true
+  `;
+}
 ```
 
 `AppModule`에 `ScheduleModule.forRoot()` + `MemoryModule` 추가.
@@ -457,6 +468,7 @@ private async runClustering(vectors: number[][], ids: string[]) {
                 version=기존+1, parent_memory_id=기존 id,
                 root_memory_id=기존 root_memory_id (null이면 기존 id)
               기존 memory_contents → 신규 memory_id로 재귀속 (UPDATE memory_content SET memory_id)
+              기존 memory__keyword → 신규 memory_id로 재귀속 (UPDATE memory__keyword SET memory_id)
               신규 클러스터 messages로 memory_content 추가
               embedding 재계산: 모든 연결 messages embeddings의 centroid
   4. 조건 미충족
@@ -468,13 +480,16 @@ private async runClustering(vectors: number[][], ids: string[]) {
       importance = clamp(importance + 0.15 * cluster_size_score, 0, 1)
       (.env: MAX_CLUSTER_SIZE=50)
   6. score 계산 후 memory에 저장 (score, scored_at, confirmed_score 등 컴포넌트)
-     + LLM 반환 keywords → keyword 테이블 upsert + memory__keyword 연결
+     + LLM 반환 keywords → keyword 테이블 upsert (ON CONFLICT (code) DO NOTHING — 기존 name 유지)
+       + memory__keyword 연결 (ON CONFLICT DO NOTHING — 기존 링크 유지)
   7. 포함 messages: is_proceeded = true, memory_content__message FK 연결
   8. 노이즈: 즉시 단일 메시지 케이스 로직 적용 → is_proceeded = true
-  9. repetition_count 갱신: 이번 배치에서 is_proceeded = true된 messages의 embedding과
-     전체 knowledge memories embedding 비교.
-     similarity >= REPETITION_SIMILARITY_THRESHOLD인 memory마다 repetition_count + 1
-반환: 위에서 생성/merge된 memory rows (id, is_pinned, score, sensitivity)
+     처리된 memory도 반환 목록에 포함
+  9. repetition_strength 갱신: 이번 배치에서 is_proceeded = true된 messages의 embedding과
+     이번 배치 이전부터 존재하던 knowledge memories (batchResults ids 제외) embedding 비교.
+     similarity >= REPETITION_SIMILARITY_THRESHOLD인 memory마다:
+       repetition_strength = clamp(repetition_strength + 0.005 * similarity, 0, 1)
+반환: 클러스터 + 노이즈 경로로 생성/merge된 전체 memory rows (id, is_pinned, score, sensitivity)
 ```
 
 ### 단일 메시지 케이스 (미처리 메시지 수 < HDBSCAN_MIN_CLUSTER_SIZE)
@@ -496,7 +511,7 @@ clustering 서버 호출 없이 메시지 embedding을 기존 knowledge memories
 {memory.content}  // 클러스터 messages의 원문 합산 텍스트 (memory_content들을 순서대로 join)
 
 {
-  "keywords": ["키워드1", "키워드2"],
+  "keywords": [{"code": "영문-소문자-하이픈-슬러그", "name": "표시할 한국어명"}],
   "summary": "한 문장 요약",
   "importance": 0.0~1.0,
   "durability": 0.0~1.0,

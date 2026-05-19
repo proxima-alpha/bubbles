@@ -44,12 +44,12 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
     `cluster_size_score = min(1, log(1+cluster_size) / log(1+MAX_CLUSTER_SIZE))`
     `importance = clamp(importance + 0.15 * cluster_size_score, 0, 1)`
 - **confirmed**: LLM이 단독으로 부여하는 정적 점수가 아닌 누적 계산값
-  - `0.4 * explicit_signal + 0.3 * repetition_score + 0.2 * user_action_score + 0.1 * llm_confidence_hint`
+  - `0.4 * explicit_signal + 0.3 * repetition_strength + 0.2 * user_action_score + 0.1 * llm_confidence_hint`
   - `explicit_signal`: 사용자 발화의 확정성 ("~로 정했어" → 높음, "~할까?" → 낮음)
-  - `repetition_score`: 유사 memory가 반복 등장한 횟수 (vector similarity 기반)
+  - `repetition_strength`: 유사 memory 반복 등장 강도 (float, 0~1). 매 배치 similarity 누적, 매일 감쇠 (`*=0.995`)
   - `user_action_score`: pin → 매우 높음, 직접 수정 → 높음, 삭제 → 제외
   - `llm_confidence_hint`: knowledge memory 생성 시 LLM이 보조적으로 제공하는 신뢰도
-  - DB에 `explicit_signal`, `repetition_count`, `user_action_score`, `llm_confidence_hint`, `confirmed_score` 분리 저장. 스케줄러 실행 시 재계산
+  - DB에 `explicit_signal`, `repetition_strength`, `user_action_score`, `llm_confidence_hint`, `confirmed_score` 분리 저장. `repetition_strength`는 배치마다 점진 갱신(재계산 없이 누적), 나머지는 배치 시 재계산
 
 ### 3. 키워드 대시보드
 - knowledge memory 생성/merge 시 LLM이 추출한 키워드 사용
@@ -197,3 +197,4 @@ bubbles/
 ## 메모
 
 - Discord 봇 채널 추가 예정 — 별도 Spec으로 분리. 웹 완성 후 NestJS 백엔드에 Discord 봇 인터페이스만 붙이는 방식
+- knowledge memory가 많이 분화되면 knowledge memory 간 병합 단계가 필요할 수 있음 — 유사도 높은 knowledge memories를 주기적으로 consolidate하는 배치 고려
