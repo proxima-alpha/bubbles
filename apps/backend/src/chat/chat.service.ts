@@ -1,14 +1,25 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { ModelService } from '../model/model.service';
+import { MemoryService } from '../memory/memory.service';
 import { SendMessageDto } from './dto/send-message.dto';
+
+function buildSystemPrompt(mainMemory: string | null, knowledgeItems: string[]): string {
+  let prompt = '당신은 사용자를 깊이 이해하는 개인 AI 어시스턴트입니다.';
+  if (mainMemory) prompt += `\n\n[사용자 기억]\n${mainMemory}`;
+  if (knowledgeItems.length > 0) prompt += `\n\n[관련 지식]\n${knowledgeItems.join('\n---\n')}`;
+  return prompt;
+}
 
 @Injectable()
 export class ChatService {
   constructor(
     private prisma: PrismaService,
     private modelService: ModelService,
+    private memoryService: MemoryService,
+    private config: ConfigService,
   ) {}
 
   async sendMessageStream(userId: string, dto: SendMessageDto, res: Response) {
@@ -30,16 +41,30 @@ export class ChatService {
       return;
     }
 
+    const topK = this.config.get<number>('RAG_TOP_K', 5);
+    const [mainMemory, topKnowledge] = await Promise.all([
+      this.memoryService.getActiveMainMemory(userId),
+      this.memoryService.getTopKnowledge(userId, queryEmbedding, topK),
+    ]);
+
+    const systemPrompt = buildSystemPrompt(
+      mainMemory,
+      topKnowledge.map(m => m.summary),
+    );
+
     const recentMessages = await this.prisma.message.findMany({
       where: { user_id: userId },
       orderBy: { created_at: 'desc' },
       take: 20,
     });
 
-    const messages = recentMessages.reverse().map(m => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      ...recentMessages.reverse().map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      })),
+    ];
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
