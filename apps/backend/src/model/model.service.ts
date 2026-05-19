@@ -18,8 +18,24 @@ export class ModelService {
     return { model: user.model, baseUrl, provider: 'ollama' };
   }
 
-  async *chatStream(userId: string, messages: LlmMessage[]): AsyncGenerator<string> {
+  async *chatStream(
+    userId: string,
+    messages: LlmMessage[],
+  ): AsyncGenerator<string, { inputTokens: number | null; outputTokens: number | null }, unknown> {
     const { model, baseUrl } = await this.getModelInfo(userId);
-    yield* this.ollamaProvider.chatStream(baseUrl, model, messages);
+    return yield* this.ollamaProvider.chatStream(baseUrl, model, messages);
+  }
+
+  async embedText(text: string): Promise<number[]> {
+    const baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        return await this.ollamaProvider.embed(baseUrl, text);
+      } catch (e) {
+        if (attempt === 3) throw e;
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+    throw new Error('unreachable');
   }
 }

@@ -1,7 +1,7 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 
 export interface LlmMessage {
-  role: 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant';
   content: string;
 }
 
@@ -13,7 +13,22 @@ export interface LlmResponse {
 
 @Injectable()
 export class OllamaProvider {
-  async *chatStream(baseUrl: string, model: string, messages: LlmMessage[]): AsyncGenerator<string> {
+  async embed(baseUrl: string, text: string): Promise<number[]> {
+    const res = await fetch(`${baseUrl}/api/embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'nomic-embed-text', prompt: text }),
+    });
+    if (!res.ok) throw new Error(`Ollama embed error: ${res.status}`);
+    const data = await res.json();
+    return data.embedding as number[];
+  }
+
+  async *chatStream(
+    baseUrl: string,
+    model: string,
+    messages: LlmMessage[],
+  ): AsyncGenerator<string, { inputTokens: number | null; outputTokens: number | null }, unknown> {
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -36,7 +51,12 @@ export class OllamaProvider {
         if (!line.trim()) continue;
         const data = JSON.parse(line);
         if (data.message?.content) yield data.message.content;
-        if (data.done) return;
+        if (data.done) {
+          return {
+            inputTokens: data.prompt_eval_count ?? null,
+            outputTokens: data.eval_count ?? null,
+          };
+        }
       }
 
       if (done) break;
@@ -46,5 +66,7 @@ export class OllamaProvider {
       const data = JSON.parse(buffer.trim());
       if (data.message?.content) yield data.message.content;
     }
+
+    return { inputTokens: null, outputTokens: null };
   }
 }
