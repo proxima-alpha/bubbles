@@ -464,17 +464,16 @@ private async runClustering(vectors: number[][], ids: string[]) {
      AND 클러스터 내부 avg_similarity >= MERGE_AVG_SIMILARITY (default 0.7)
          (= 클러스터 내 각 message embedding과 centroid 간 cosine similarity 평균)
      → merge: 기존 memory is_active=false, deactivated_at=now()
+              (기존 memory_contents + memory__keywords는 기존 row에 유지 — 이력 보존)
               신규 memory row 생성: type='knowledge', history_type='renewed',
                 version=기존+1, parent_memory_id=기존 id,
                 root_memory_id=기존 root_memory_id (null이면 기존 id)
-              기존 memory_contents → 신규 memory_id로 재귀속 (UPDATE memory_content SET memory_id)
-              기존 memory__keyword → 신규 memory_id로 재귀속 (UPDATE memory__keyword SET memory_id)
-              신규 클러스터 messages로 memory_content 추가
+              신규 memory_content: step 5 LLM 응답 contents로 생성 (재귀속 아님)
               embedding 재계산: 모든 연결 messages embeddings의 centroid
   4. 조건 미충족
      → 신규 knowledge memory + memory_content 생성
   5. LLM 호출 (클러스터 수만큼 병렬, user.model 사용): keywords + 점수 요소 산정
-     입력: 신규 memory → 이번 배치 클러스터 messages만 / merge → memory.content 전체 (기존 + 신규)
+     입력: 신규 memory → 이번 배치 클러스터 messages 원문 / merge → 기존 memory.content + 이번 클러스터 messages 원문
   5a. LLM 반환 importance 보정:
       cluster_size_score = min(1, log(1 + cluster_size) / log(1 + MAX_CLUSTER_SIZE))
       importance = clamp(importance + 0.15 * cluster_size_score, 0, 1)
@@ -483,6 +482,7 @@ private async runClustering(vectors: number[][], ids: string[]) {
      + LLM 반환 keywords → keyword 테이블 upsert (ON CONFLICT (code) DO NOTHING — 기존 name 유지)
        + memory__keyword 연결 (ON CONFLICT DO NOTHING — 기존 링크 유지)
   7. 포함 messages: is_proceeded = true, memory_content__message FK 연결
+     memory.content 갱신: 해당 memory의 memory_contents를 order ASC로 join → memory.content 업데이트
   8. 노이즈: 즉시 단일 메시지 케이스 로직 적용 → is_proceeded = true
      처리된 memory도 반환 목록에 포함
   9. repetition_strength 갱신: 이번 배치에서 is_proceeded = true된 messages의 embedding과
@@ -500,7 +500,7 @@ clustering 서버 호출 없이 메시지 embedding을 기존 knowledge memories
 1. 메시지 embedding과 기존 knowledge memories 간 cosine similarity 계산
 2. max_similarity >= MERGE_MAX_SIMILARITY → merge (MERGE_AVG_SIMILARITY 조건 생략, 신규 row 생성 동일)
 3. 미충족 → 신규 knowledge memory 생성
-4. 이후 steps 5a–7 동일 (cluster_size = 1이므로 cluster_size_score ≈ 0, importance 보정 없음)
+4. 이후 steps 5a–7 동일 (cluster_size = 1)
 ```
 
 ### LLM 프롬프트 (키워드 + 점수 산정)
@@ -512,6 +512,7 @@ clustering 서버 호출 없이 메시지 embedding을 기존 knowledge memories
 
 {
   "keywords": [{"code": "영문-소문자-하이픈-슬러그", "name": "표시할 한국어명"}],
+  "contents": [{"order": 1, "text": "내용 청크"}],
   "summary": "한 문장 요약",
   "importance": 0.0~1.0,
   "durability": 0.0~1.0,
@@ -692,7 +693,7 @@ GET /memory/knowledge   → KnowledgeMemory[]
 ```json
 [{
   "id": "uuid",
-  "keywords": ["키워드"],
+  "keywords": [{"code": "keyword-slug", "name": "키워드 표시명"}],
   "version": 1,
   "isPinned": false,
   "createdAt": "2024-01-01T00:00:00Z"
