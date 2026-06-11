@@ -33,10 +33,11 @@ export class ChatService {
     let queryEmbedding: number[];
     try {
       queryEmbedding = await this.modelService.embedText(dto.content);
+      const queryVec = `[${queryEmbedding.join(',')}]`;
       await this.prisma.$executeRaw`
-        UPDATE message SET embedding = ${queryEmbedding}::vector WHERE id = ${userMsg.id}::uuid
+        UPDATE message SET embedding = ${queryVec}::vector WHERE id = ${userMsg.id}::uuid
       `;
-    } catch {
+    } catch (e) {
       res.status(503).json({ message: '잠시 후 재시도해주세요.' });
       return;
     }
@@ -100,7 +101,7 @@ export class ChatService {
 
     void this.modelService.embedText(fullContent)
       .then(vec => this.prisma.$executeRaw`
-        UPDATE message SET embedding = ${vec}::vector WHERE id = ${assistantMsg.id}::uuid
+        UPDATE message SET embedding = ${`[${vec.join(',')}]`}::vector WHERE id = ${assistantMsg.id}::uuid
       `)
       .catch(e => console.error('assistant embed failed', e));
 

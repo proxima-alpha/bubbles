@@ -197,13 +197,13 @@ export class SchedulerService {
       { id: string; content: string | null; version: number; root_memory_id: string | null; similarity: number }[]
     >`
       SELECT id, content, version, root_memory_id,
-             (1 - (embedding <=> ${vec}::vector)) AS similarity
+             (1 - (embedding <=> ${`[${vec.join(',')}]`}::vector)) AS similarity
       FROM memory
       WHERE user_id = ${userId}::uuid
         AND type = 'knowledge'
         AND is_active = true
         AND embedding IS NOT NULL
-      ORDER BY embedding <=> ${vec}::vector
+      ORDER BY embedding <=> ${`[${vec.join(',')}]`}::vector
       LIMIT 1
     `;
 
@@ -311,7 +311,7 @@ ${contentText}
 
     // embedding 저장
     await this.prisma.$executeRaw`
-      UPDATE memory SET embedding = ${memCentroid}::vector WHERE id = ${newMemory.id}::uuid
+      UPDATE memory SET embedding = ${`[${memCentroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
     `;
 
     // memory_contents 생성

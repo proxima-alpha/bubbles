@@ -19,7 +19,7 @@ export default function LoginPage() {
     try {
       await api.post('/auth/login', { email, password });
       router.push('/chat');
-    } catch {
+    } catch (e) {
       setError('이메일 또는 비밀번호가 올바르지 않습니다.');
     } finally {
       setLoading(false);

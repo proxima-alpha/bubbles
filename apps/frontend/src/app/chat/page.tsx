@@ -52,6 +52,11 @@ export default function ChatPage() {
     setIsStreaming(true);
     setStreamingContent('');
 
+    queryClient.setQueryData<Message[]>(['chat-history'], old => [
+      ...(old ?? []),
+      { id: 'optimistic', role: 'user', content, createdAt: new Date().toISOString() },
+    ]);
+
     try {
       const res = await fetch(`${API_URL}/chat/stream`, {
         method: 'POST',
@@ -65,9 +70,7 @@ export default function ChatPage() {
         return;
       }
 
-      if (!res.ok || !res.body) {
-        return;
-      }
+      if (!res.ok || !res.body) return;
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -88,11 +91,7 @@ export default function ChatPage() {
             .join('\n');
 
           if (!payload) continue;
-          if (payload === '[DONE]') {
-            setStreamingContent('');
-            queryClient.invalidateQueries({ queryKey: ['chat-history'] });
-            return;
-          }
+          if (payload === '[DONE]') return;
 
           const { token } = JSON.parse(payload);
           setStreamingContent(prev => prev + token);
@@ -107,15 +106,14 @@ export default function ChatPage() {
         .map(line => line.slice(6))
         .join('\n');
 
-      if (payload === '[DONE]') {
-        setStreamingContent('');
-        queryClient.invalidateQueries({ queryKey: ['chat-history'] });
-      } else if (payload) {
+      if (payload !== '[DONE]' && payload) {
         const { token } = JSON.parse(payload);
         setStreamingContent(prev => prev + token);
       }
     } finally {
       setIsStreaming(false);
+      setStreamingContent('');
+      queryClient.invalidateQueries({ queryKey: ['chat-history'] });
     }
   };
 

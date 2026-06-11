@@ -26,7 +26,7 @@ export class MemoryService {
         AND is_active = true
         AND embedding IS NOT NULL
         AND summary IS NOT NULL
-      ORDER BY embedding <=> ${embedding}::vector
+      ORDER BY embedding <=> ${`[${embedding.join(',')}]`}::vector
       LIMIT ${topK}
     `;
 
