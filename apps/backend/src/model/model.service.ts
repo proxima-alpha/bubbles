@@ -14,8 +14,11 @@ export class ModelService {
   async getModelInfo(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user?.model) throw new ForbiddenException('No model selected');
+    const modelCode = await this.prisma.common_code.findUnique({
+      where: { category_code_code: { category_code: 'model', code: user.model } },
+    });
     const baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
-    return { model: user.model, baseUrl, provider: 'ollama' };
+    return { model: user.model, baseUrl, provider: modelCode?.parent_code ?? 'unknown' };
   }
 
   async *chatStream(
