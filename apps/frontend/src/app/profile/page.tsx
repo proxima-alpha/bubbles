@@ -11,7 +11,7 @@ const MODELS = [
 
 interface UserProfile {
   email: string;
-  model: string | null;
+  model: { code: string; name: string } | null;
 }
 
 export default function ProfilePage() {
@@ -113,7 +113,7 @@ const { data: profile, isLoading } = useQuery<UserProfile>({
                   type="radio"
                   name="model"
                   value={m.code}
-                  checked={profile.model === m.code}
+                  checked={profile.model?.code === m.code}
                   disabled={updateModelMutation.isPending}
                   onChange={() => updateModelMutation.mutate(m.code)}
                 />
