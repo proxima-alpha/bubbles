@@ -12,7 +12,17 @@ export class UserService {
   async getUser(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException();
-    return { email: user.email, model: user.model };
+
+    const modelCode = user.model
+      ? await this.prisma.common_code.findUnique({
+          where: { category_code_code: { category_code: 'model', code: user.model } },
+        })
+      : null;
+
+    return {
+      email: user.email,
+      model: modelCode ? { code: modelCode.code, name: modelCode.name } : null,
+    };
   }
 
   async updateUser(userId: string, dto: UpdateUserDto) {
