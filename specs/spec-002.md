@@ -223,7 +223,7 @@ try {
   await this.prisma.$executeRaw`
     UPDATE message SET embedding = ${queryEmbedding}::vector WHERE id = ${userMsg.id}::uuid
   `;
-} catch {
+} catch (e) {
   res.status(503).json({ message: '잠시 후 재시도해주세요.' });
   return;
 }
