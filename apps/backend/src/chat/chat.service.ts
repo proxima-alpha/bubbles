@@ -115,11 +115,22 @@ export class ChatService {
       orderBy: { created_at: 'desc' },
     });
 
+    const providerCodes = [...new Set(messages.map(m => m.provider).filter((v): v is string => v !== null))];
+    const modelCodes = [...new Set(messages.map(m => m.model).filter((v): v is string => v !== null))];
+
+    const [providers, models] = await Promise.all([
+      this.prisma.common_code.findMany({ where: { category_code: 'provider', code: { in: providerCodes } } }),
+      this.prisma.common_code.findMany({ where: { category_code: 'model', code: { in: modelCodes } } }),
+    ]);
+
+    const providerMap = Object.fromEntries(providers.map(p => [p.code, p.name]));
+    const modelMap = Object.fromEntries(models.map(m => [m.code, m.name]));
+
     return messages.map(m => ({
       id: m.id,
       role: m.role,
-      provider: m.provider,
-      model: m.model,
+      provider: m.provider ? { code: m.provider, name: providerMap[m.provider] ?? m.provider } : null,
+      model: m.model ? { code: m.model, name: modelMap[m.model] ?? m.model } : null,
       content: m.content,
       createdAt: m.created_at,
     }));
