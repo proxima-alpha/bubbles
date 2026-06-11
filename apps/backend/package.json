@@ -17,7 +17,10 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "prisma:status": "dotenv -e .env -- npx prisma migrate status --config prisma/prisma.config.ts",
+    "prisma:deploy": "dotenv -e .env -- npx prisma migrate deploy --config prisma/prisma.config.ts",
+    "prisma:dev": "dotenv -e .env -- npx prisma migrate dev --config prisma/prisma.config.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -56,6 +59,7 @@
     "@types/jest": "^29.5.14",
     "@types/node": "^24.0.0",
     "@types/supertest": "^7.0.0",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
