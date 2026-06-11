@@ -6,16 +6,23 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import api from '@/lib/api';
 
+interface CodeDto {
+  code: string;
+  name: string;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
+  provider: CodeDto | null;
+  model: CodeDto | null;
   content: string;
   createdAt: string;
 }
 
 interface UserProfile {
   email: string;
-  model: string | null;
+  model: CodeDto | null;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -155,8 +162,15 @@ export default function ChatPage() {
               {messages.map(msg => (
                 <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {msg.role === 'assistant' && (
-                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mr-2 flex-shrink-0 self-end">
-                      AI
+                    <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center text-xs font-bold mr-2 flex-shrink-0 self-end">
+                      {msg.provider ? (
+                        <img
+                          src={`/image/provider/thumb/${msg.provider.code}.png`}
+                          alt={msg.provider.name}
+                          className="w-full h-full object-cover"
+                          onError={e => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.textContent = '?'; }}
+                        />
+                      ) : '?'}
                     </div>
                   )}
                   <div className={`max-w-[75%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap ${
@@ -170,8 +184,8 @@ export default function ChatPage() {
               ))}
               {isStreaming && (
                 <div className="flex justify-start">
-                  <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold mr-2 flex-shrink-0 self-end">
-                    AI
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center text-xs font-bold mr-2 flex-shrink-0 self-end">
+                    ?
                   </div>
                   <div className="bg-white border rounded-2xl rounded-bl-sm px-4 py-2 text-sm whitespace-pre-wrap text-gray-800 max-w-[75%]">
                     {streamingContent || <span className="text-gray-400">...</span>}
