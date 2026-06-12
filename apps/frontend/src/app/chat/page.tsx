@@ -162,34 +162,50 @@ export default function ChatPage() {
             <div className="space-y-4">
               {messages.map(msg => (
                 <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  {msg.role === 'assistant' && (
-                    <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center text-xs font-bold mr-2 flex-shrink-0 self-end">
-                      {msg.provider ? (
-                        <img
-                          src={`/image/provider/thumb/${msg.provider.code}.png`}
-                          alt={msg.provider.name}
-                          className="w-full h-full object-cover"
-                          onError={e => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.textContent = '?'; }}
-                        />
-                      ) : '?'}
+                  {msg.role === 'assistant' ? (
+                    <div className="flex flex-col items-start max-w-[75%]">
+                      <div className="bg-white border text-gray-800 rounded-2xl rounded-bl-sm px-4 py-2 text-sm whitespace-pre-wrap">
+                        {msg.content}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-1.5">
+                        <div className="w-10 h-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                          {msg.provider ? (
+                            <img
+                              src={`/image/provider/thumb/${msg.provider.code}.png`}
+                              alt={msg.provider.name}
+                              className="w-full h-full object-cover"
+                              onError={e => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.textContent = '?'; }}
+                            />
+                          ) : '?'}
+                        </div>
+                        <div className="flex flex-col">
+                          {msg.provider && (
+                            <span className="text-xs text-gray-400">{msg.provider.name}</span>
+                          )}
+                          <span className="text-[10px] text-gray-300">
+                            {new Date(msg.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="max-w-[75%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap bg-black text-white rounded-br-sm">
+                      {msg.content}
                     </div>
                   )}
-                  <div className={`max-w-[75%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap ${
-                    msg.role === 'user'
-                      ? 'bg-black text-white rounded-br-sm'
-                      : 'bg-white border text-gray-800 rounded-bl-sm'
-                  }`}>
-                    {msg.content}
-                  </div>
                 </div>
               ))}
               {isStreaming && (
                 <div className="flex justify-start">
-                  <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center text-xs font-bold mr-2 flex-shrink-0 self-end">
-                    ?
-                  </div>
-                  <div className="bg-white border rounded-2xl rounded-bl-sm px-4 py-2 text-sm whitespace-pre-wrap text-gray-800 max-w-[75%]">
-                    {streamingContent || <span className="text-gray-400">...</span>}
+                  <div className="flex flex-col items-start max-w-[75%]">
+                    <div className="bg-white border rounded-2xl rounded-bl-sm px-4 py-2 text-sm whitespace-pre-wrap text-gray-800">
+                      {streamingContent || <span className="text-gray-400">...</span>}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <div className="w-10 h-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                        ?
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
