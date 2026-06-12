@@ -10,18 +10,15 @@ export class UserService {
   constructor(private prisma: PrismaService) {}
 
   async getUser(userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { model_code: true },
+    });
     if (!user) throw new NotFoundException();
-
-    const modelCode = user.model
-      ? await this.prisma.common_code.findUnique({
-          where: { category_code_code: { category_code: 'model', code: user.model } },
-        })
-      : null;
 
     return {
       email: user.email,
-      model: modelCode ? { code: modelCode.code, name: modelCode.name } : null,
+      model: user.model_code ? { code: user.model_code.code, name: user.model_code.name } : null,
     };
   }
 

@@ -36,6 +36,15 @@ model common_code {
   category common_code_category @relation(fields: [category_code], references: [code])
   parent   common_code?         @relation("common_code_parent", fields: [parent_category_code, parent_code], references: [category_code, code])
   children common_code[]        @relation("common_code_parent")
+
+  user_models           user[]        @relation("user_model")
+  license_key_providers license_key[] @relation("license_key_provider")
+  message_roles         message[]     @relation("message_role")
+  message_providers     message[]     @relation("message_provider")
+  message_models        message[]     @relation("message_model")
+  memory_types          memory[]      @relation("memory_type")
+  memory_history_types  memory[]      @relation("memory_history_type")
+  schedule_types        schedule[]    @relation("schedule_type")
 }
 
 model user {
@@ -47,6 +56,8 @@ model user {
   salt           String   @db.VarChar
   created_at     DateTime @default(now()) @db.Timestamptz
   updated_at     DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  model_code common_code? @relation("user_model", fields: [model_category, model], references: [category_code, code])
 
   license_keys license_key[]
   messages     message[]
@@ -65,7 +76,8 @@ model license_key {
 
   @@unique([user_id, provider])
 
-  user user @relation(fields: [user_id], references: [id])
+  user          user        @relation(fields: [user_id], references: [id])
+  provider_code common_code @relation("license_key_provider", fields: [provider_category, provider], references: [category_code, code])
 }
 
 model message {
@@ -84,7 +96,11 @@ model message {
   is_proceeded      Boolean                    @default(false)
   created_at        DateTime                   @default(now()) @db.Timestamptz
 
-  user                    user                      @relation(fields: [user_id], references: [id])
+  user          user        @relation(fields: [user_id], references: [id])
+  role_code     common_code  @relation("message_role",     fields: [role_category, role],         references: [category_code, code])
+  provider_code common_code? @relation("message_provider", fields: [provider_category, provider],  references: [category_code, code])
+  model_code    common_code? @relation("message_model",    fields: [model_category, model],        references: [category_code, code])
+
   memory_content_messages memory_content__message[]
 }
 
@@ -121,7 +137,10 @@ model memory {
   created_at            DateTime  @default(now()) @db.Timestamptz
   updated_at            DateTime  @default(now()) @updatedAt @db.Timestamptz
 
-  user           user     @relation(fields: [user_id], references: [id])
+  user              user        @relation(fields: [user_id], references: [id])
+  type_code         common_code  @relation("memory_type",         fields: [type_category, type],                 references: [category_code, code])
+  history_type_code common_code? @relation("memory_history_type", fields: [history_type_category, history_type], references: [category_code, code])
+
   root_memory    memory?  @relation("memory_root", fields: [root_memory_id], references: [id])
   child_memories memory[] @relation("memory_root")
   parent_memory  memory?  @relation("memory_parent", fields: [parent_memory_id], references: [id])
@@ -181,5 +200,6 @@ model schedule {
 
   @@unique([user_id, type])
 
-  user user @relation(fields: [user_id], references: [id])
+  user      user        @relation(fields: [user_id], references: [id])
+  type_code common_code @relation("schedule_type", fields: [type_category, type], references: [category_code, code])
 }

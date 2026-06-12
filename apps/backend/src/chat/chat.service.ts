@@ -113,24 +113,14 @@ export class ChatService {
     const messages = await this.prisma.message.findMany({
       where: { user_id: userId },
       orderBy: { created_at: 'desc' },
+      include: { provider_code: true, model_code: true },
     });
-
-    const providerCodes = [...new Set(messages.map(m => m.provider).filter((v): v is string => v !== null))];
-    const modelCodes = [...new Set(messages.map(m => m.model).filter((v): v is string => v !== null))];
-
-    const [providers, models] = await Promise.all([
-      this.prisma.common_code.findMany({ where: { category_code: 'provider', code: { in: providerCodes } } }),
-      this.prisma.common_code.findMany({ where: { category_code: 'model', code: { in: modelCodes } } }),
-    ]);
-
-    const providerMap = Object.fromEntries(providers.map(p => [p.code, p.name]));
-    const modelMap = Object.fromEntries(models.map(m => [m.code, m.name]));
 
     return messages.map(m => ({
       id: m.id,
       role: m.role,
-      provider: m.provider ? { code: m.provider, name: providerMap[m.provider] ?? m.provider } : null,
-      model: m.model ? { code: m.model, name: modelMap[m.model] ?? m.model } : null,
+      provider: m.provider_code ? { code: m.provider_code.code, name: m.provider_code.name } : null,
+      model: m.model_code ? { code: m.model_code.code, name: m.model_code.name } : null,
       content: m.content,
       createdAt: m.created_at,
     }));

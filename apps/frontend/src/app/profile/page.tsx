@@ -19,7 +19,8 @@ export default function ProfilePage() {
 
 const { data: profile, isLoading } = useQuery<UserProfile>({
     queryKey: ['user'],
-    queryFn: () => api.get('/user').then(r => r.data),
+    queryFn: () => api.get('/auth/me').then(r => r.data),
+    throwOnError: (err: any) => err.response?.status >= 500,
   });
 
   const [email, setEmail] = useState('');

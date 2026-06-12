@@ -37,7 +37,8 @@ export default function ChatPage() {
 
   const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
     queryKey: ['user'],
-    queryFn: () => api.get('/user').then(r => r.data),
+    queryFn: () => api.get('/auth/me').then(r => r.data),
+    throwOnError: (err: any) => err.response?.status >= 500,
   });
 
   const { data: messages = [], isLoading: historyLoading } = useQuery<Message[]>({
