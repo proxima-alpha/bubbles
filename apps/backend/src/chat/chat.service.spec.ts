@@ -32,8 +32,8 @@ describe('ChatService', () => {
   describe('getHistory', () => {
     it('유저의 메시지 목록이 created_at 내림차순으로 반환되어야 한다', async () => {
       const rows = [
-        { id: '1', role: 'user', provider: null, model: null, content: 'hi', created_at: new Date('2024-01-01') },
-        { id: '2', role: 'assistant', provider: 'ollama', model: 'exaone3.5:2.4b', content: 'hello', created_at: new Date('2024-01-02') },
+        { id: '1', role: 'user', provider_code: null, model_code: null, content: 'hi', created_at: new Date('2024-01-01') },
+        { id: '2', role: 'assistant', provider_code: { code: 'exaone', name: 'EXAONE' }, model_code: { code: 'exaone3.5:2.4b', name: 'EXAONE 3.5 2.4B' }, content: 'hello', created_at: new Date('2024-01-02') },
       ];
       mockPrisma.message.findMany.mockResolvedValue(rows);
 
@@ -42,6 +42,7 @@ describe('ChatService', () => {
       expect(mockPrisma.message.findMany).toHaveBeenCalledWith({
         where: { user_id: 'u1' },
         orderBy: { created_at: 'desc' },
+        include: { provider_code: true, model_code: true },
       });
       expect(result).toHaveLength(2);
       expect(result[0]).toMatchObject({ id: '1', role: 'user', content: 'hi' });
@@ -61,7 +62,7 @@ describe('ChatService', () => {
       mockPrisma.user.findUnique.mockResolvedValue({ model: 'exaone3.5:2.4b' });
       mockPrisma.message.create.mockResolvedValue({});
       mockPrisma.message.findMany.mockResolvedValue([]);
-      mockModelService.getModelInfo.mockResolvedValue({ model: 'exaone3.5:2.4b', provider: 'ollama' });
+      mockModelService.getModelInfo.mockResolvedValue({ model: 'exaone3.5:2.4b', provider: 'exaone' });
       async function* fakeStream() { yield 'hello'; yield ' world'; }
       mockModelService.chatStream.mockReturnValue(fakeStream());
       const mockRes = { setHeader: jest.fn(), write: jest.fn(), end: jest.fn() };
