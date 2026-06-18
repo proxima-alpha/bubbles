@@ -16,9 +16,9 @@
 
 ---
 
-## 태스크
+## 구현 대상
 
-### T1. seed.ts — provider 공통코드 변경
+- [x] T1. seed.ts — provider 공통코드 변경
 
 `ollama` 제거, 브랜드별 provider 추가. model의 `parent_code` 업데이트.
 
@@ -34,7 +34,7 @@
 { category_code: 'model', code: 'exaone3.5:2.4b', name: 'EXAONE 3.5 2.4B', parent_category_code: 'provider', parent_code: 'exaone', order: 1 },
 ```
 
-### T2. src/common/dto/code.dto.ts — CodeDto 정의
+- [x] T2. src/common/dto/code.dto.ts — CodeDto 정의
 
 ```ts
 export class CodeDto {
@@ -43,7 +43,7 @@ export class CodeDto {
 }
 ```
 
-### T3. model.service.ts — getModelInfo에서 provider를 common_code parent_code로 조회
+- [x] T3. model.service.ts — getModelInfo에서 provider를 common_code parent_code로 조회
 
 ```ts
 async getModelInfo(userId: string) {
@@ -63,7 +63,7 @@ async getModelInfo(userId: string) {
 }
 ```
 
-### T4. user.service.ts — getProfile에서 model을 CodeDto로 반환
+- [x] T4. user.service.ts — getProfile에서 model을 CodeDto로 반환
 
 ```ts
 async getProfile(userId: string) {
@@ -81,7 +81,7 @@ async getProfile(userId: string) {
 }
 ```
 
-### T5. chat.service.ts — getHistory에서 provider, model을 CodeDto로 반환
+- [x] T5. chat.service.ts — getHistory에서 provider, model을 CodeDto로 반환
 
 `message.provider`, `message.model` 값으로 common_code join.
 
@@ -118,7 +118,7 @@ async getHistory(userId: string) {
 }
 ```
 
-### T6. frontend chat/page.tsx — provider 이미지로 아바타 교체
+- [x] T6. frontend chat/page.tsx — provider 이미지로 아바타 교체
 
 - `Message` 인터페이스에 `provider: { code: string; name: string } | null` 추가
 - AI 아바타: `/image/provider/thumb/${provider.code}.png` — 없으면 "?" fallback
@@ -138,7 +138,7 @@ async getHistory(userId: string) {
 )}
 ```
 
-### T7. frontend profile/page.tsx — UserProfile.model 타입 CodeDto로 업데이트
+- [x] T7. frontend profile/page.tsx — UserProfile.model 타입 CodeDto로 업데이트
 
 `model: string | null` → `model: { code: string; name: string } | null`
 

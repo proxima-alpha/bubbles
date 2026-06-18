@@ -72,10 +72,17 @@ model message {
   // 기존 컬럼 유지 ...
 
   // Spec 2 추가 — Ollama 응답 마지막 청크의 usage 필드에서 추출
-  input_tokens  Int?
-  output_tokens Int?
+  input_tokens      Int?
+  output_tokens     Int?
+
+  // Spec 2 추가 — assistant 메시지가 어떤 user 질문에 대한 응답인지 참조
+  parent_message_id String?  @db.Uuid
+  parent_message    message? @relation("message_parent", fields: [parent_message_id], references: [id])
+  child_messages    message[] @relation("message_parent")
 }
 ```
+
+`parent_message_id`: assistant role 메시지에만 설정. user 질문 → assistant 응답 쌍을 DB 레벨에서 추적.
 
 Ollama 스트리밍 응답의 마지막 청크(`data.done === true`)에 `prompt_eval_count`(입력), `eval_count`(출력) 필드가 포함됨. `ollama.provider.ts`에서 추출해 `ChatService`로 반환.
 
@@ -481,8 +488,10 @@ private async runClustering(vectors: number[][], ids: string[]) {
   6. score 계산 후 memory에 저장 (score, scored_at, confirmed_score 등 컴포넌트)
      + LLM 반환 keywords → keyword 테이블 upsert (ON CONFLICT (code) DO NOTHING — 기존 name 유지)
        + memory__keyword 연결 (ON CONFLICT DO NOTHING — 기존 링크 유지)
-  7. 포함 messages: is_proceeded = true, memory_content__message FK 연결
-     memory.content 갱신: 해당 memory의 memory_contents를 order ASC로 join → memory.content 업데이트
+  7. LLM 응답의 attribution 맵으로 memory_content__message 생성
+     (attribution 없는 contents 행은 저장 금지)
+     memory.content = contents 배열을 \n으로 join하여 저장
+     포함 messages: is_proceeded = true
   8. 노이즈: 즉시 단일 메시지 케이스 로직 적용 → is_proceeded = true
      처리된 memory도 반환 목록에 포함
   9. repetition_strength 갱신: 이번 배치에서 is_proceeded = true된 messages의 embedding과
@@ -503,16 +512,43 @@ clustering 서버 호출 없이 메시지 embedding을 기존 knowledge memories
 4. 이후 steps 5a–7 동일 (cluster_size = 1)
 ```
 
+### memory_content 구조 설계
+
+- `memory` = LLM이 생성한 요약 문단 전체
+- `memory_content` = 그 문단을 구성하는 각 문장 (LLM이 배열로 반환)
+- `memory_content__message` = 각 문장이 어떤 원본 메시지에서 유래했는지 (N:M 귀속)
+  - **불변 조건**: `memory_content` 1행은 반드시 1개 이상의 message와 연결되어야 함 (근거 없는 문장 금지)
+- `memory.content` = `memory_content` 문장들을 `\n`으로 join한 전체 텍스트
+
+### LLM 입력 포맷
+
+메시지 원문을 role/provider 구분 + `message_id` 포함 배열로 전달:
+
+```json
+// provider가 "user"이면 이용자 질문, 그 외는 AI 제공자명
+[
+  {"user":   {"text": "파이썬 list comprehension이 뭐야?", "message_id": "uuid-a"}},
+  {"ollama": {"text": "[x*2 for x in lst] 이렇게 쓰면 돼", "message_id": "uuid-b"}}
+]
+```
+
+merge 케이스: 기존 `memory.content` 문장들을 먼저 배열에 포함 (`message_id` 없음 — 이미 처리된 기존 내용).
+association 대상은 새 messages만.
+
 ### LLM 프롬프트 (키워드 + 점수 산정)
 
 ```
 다음 대화 내용을 분석하여 JSON으로만 응답하세요.
 
-{memory.content}  // 클러스터 messages의 원문 합산 텍스트 (memory_content들을 순서대로 join)
+{입력 배열 — [{provider_or_user: {text, message_id}}, ...]}
 
 {
   "keywords": [{"code": "영문-소문자-하이픈-슬러그", "name": "표시할 한국어명"}],
-  "contents": [{"order": 1, "text": "내용 청크"}],
+  "contents": ["문장1", "문장2", "문장3"],
+  "association": [
+    ["uuid-a", "uuid-b"],
+    ["uuid-b"]
+  ],
   "summary": "한 문장 요약",
   "importance": 0.0~1.0,
   "durability": 0.0~1.0,
@@ -523,9 +559,17 @@ clustering 서버 호출 없이 메시지 embedding을 기존 knowledge memories
   "temporary_penalty": 0.0~1.0
 }
 
+// contents: memory_content 문장 배열
+// association: contents와 같은 길이의 배열. association[i] = contents[i]의 근거 message_id 목록
 // temporary_penalty: 이 정보가 장기 기억으로 남길 가치가 낮을수록 높게 부여
 // (예: 오늘 날씨, 일시적 감정 → 높음 / 직업, 가치관 → 낮음)
 ```
+
+`association` 처리:
+- `contents[i]`와 `association[i]`는 같은 index로 대응
+- user 메시지는 LLM 입력 컨텍스트용으로만 포함 — `association`에서 user message_id는 제외
+- `association[i]`가 비어있거나 없는 `contents[i]`는 저장하지 않음 (근거 없는 문장 금지)
+- `association[i]`의 message_id → `memory_content__message` 생성
 
 ---
 
