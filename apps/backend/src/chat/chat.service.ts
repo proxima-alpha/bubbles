@@ -98,6 +98,7 @@ export class ChatService {
         content: fullContent,
         input_tokens: tokenCounts.inputTokens,
         output_tokens: tokenCounts.outputTokens,
+        parent_message_id: userMsg.id,
       },
     });
 
