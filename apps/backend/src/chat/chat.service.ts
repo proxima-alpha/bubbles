@@ -32,7 +32,7 @@ export class ChatService {
 
     let queryEmbedding: number[];
     try {
-      queryEmbedding = await this.modelService.embedText(dto.content);
+      queryEmbedding = await this.modelService.embedTextChunked(dto.content);
       const queryVec = `[${queryEmbedding.join(',')}]`;
       await this.prisma.$executeRaw`
         UPDATE message SET embedding = ${queryVec}::vector WHERE id = ${userMsg.id}::uuid
@@ -67,13 +67,15 @@ export class ChatService {
       })),
     ];
 
+    const { model, provider, modelCode, providerCode } = await this.modelService.getModelInfo(userId);
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    let fullContent = '';
-    const { model, provider } = await this.modelService.getModelInfo(userId);
+    res.write(`data: ${JSON.stringify({ type: 'meta', provider: providerCode, model: modelCode })}\n\n`);
 
+    let fullContent = '';
     const stream = this.modelService.chatStream(userId, messages);
     let tokenCounts = { inputTokens: null as number | null, outputTokens: null as number | null };
 
@@ -99,7 +101,7 @@ export class ChatService {
       },
     });
 
-    void this.modelService.embedText(fullContent)
+    void this.modelService.embedTextChunked(fullContent)
       .then(vec => this.prisma.$executeRaw`
         UPDATE message SET embedding = ${`[${vec.join(',')}]`}::vector WHERE id = ${assistantMsg.id}::uuid
       `)

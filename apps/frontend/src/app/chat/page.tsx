@@ -33,6 +33,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingMeta, setStreamingMeta] = useState<{ provider: CodeDto | null; model: CodeDto | null }>({ provider: null, model: null });
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const { data: userProfile, isLoading: profileLoading } = useQuery<UserProfile>({
@@ -59,6 +60,7 @@ export default function ChatPage() {
     setInput('');
     setIsStreaming(true);
     setStreamingContent('');
+    setStreamingMeta({ provider: null, model: null });
 
     queryClient.setQueryData<Message[]>(['chat-history'], old => [
       ...(old ?? []),
@@ -101,8 +103,12 @@ export default function ChatPage() {
           if (!payload) continue;
           if (payload === '[DONE]') return;
 
-          const { token } = JSON.parse(payload);
-          setStreamingContent(prev => prev + token);
+          const parsed = JSON.parse(payload);
+          if (parsed.type === 'meta') {
+            setStreamingMeta({ provider: parsed.provider, model: parsed.model });
+            continue;
+          }
+          setStreamingContent(prev => prev + (parsed.token ?? ''));
         }
 
         if (done) break;
@@ -115,8 +121,8 @@ export default function ChatPage() {
         .join('\n');
 
       if (payload !== '[DONE]' && payload) {
-        const { token } = JSON.parse(payload);
-        setStreamingContent(prev => prev + token);
+        const parsed = JSON.parse(payload);
+        if (parsed.token) setStreamingContent(prev => prev + parsed.token);
       }
     } finally {
       setIsStreaming(false);
@@ -203,8 +209,18 @@ export default function ChatPage() {
                     </div>
                     <div className="flex items-center gap-1.5 mt-1.5">
                       <div className="w-10 h-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center text-xs font-bold flex-shrink-0">
-                        ?
+                        {streamingMeta.provider ? (
+                          <img
+                            src={`/image/provider/thumb/${streamingMeta.provider.code}.png`}
+                            alt={streamingMeta.provider.name}
+                            className="w-full h-full object-cover"
+                            onError={e => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.textContent = '?'; }}
+                          />
+                        ) : '?'}
                       </div>
+                      {streamingMeta.provider && (
+                        <span className="text-xs text-gray-400">{streamingMeta.provider.name}</span>
+                      )}
                     </div>
                   </div>
                 </div>
