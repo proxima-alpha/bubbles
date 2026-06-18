@@ -8,14 +8,14 @@
 
 ## 태스크
 
-- [ ] (1) DB 마이그레이션: memory 점수 컴포넌트 컬럼 + score + embedding 추가, message 토큰 사용량 컬럼 추가
-- [ ] (2) Ollama 임베딩 연동 (message 저장 시 embedding 생성, 실패 시 재시도 후 에러 반환)
-- [ ] (3) 스케줄러 기반 구조 + 트리거 조건
-- [ ] (4) clustering FastAPI 서버 구현 (HDBSCAN)
-- [ ] (5) 클러스터 → knowledge memory 생성/merge + LLM 키워드/점수 산정
-- [ ] (6) 승격 조건 knowledge memories → main memory 재생성
-- [ ] (7) 컨텍스트 조립: 시스템 프롬프트 + RAG + 최근 messages
-- [ ] (8) knowledge memory 목록 API + UI
+- [x] (1) DB 마이그레이션: memory 점수 컴포넌트 컬럼 + score + embedding 추가, message 토큰 사용량 컬럼 추가
+- [x] (2) Ollama 임베딩 연동 (message 저장 시 embedding 생성, 실패 시 재시도 후 에러 반환)
+- [x] (3) 스케줄러 기반 구조 + 트리거 조건
+- [x] (4) clustering FastAPI 서버 구현 (HDBSCAN)
+- [x] (5) 클러스터 → knowledge memory 생성/merge + LLM 키워드/점수 산정
+- [x] (6) 승격 조건 knowledge memories → main memory 재생성
+- [x] (7) 컨텍스트 조립: 시스템 프롬프트 + RAG + 최근 messages
+- [x] (8) knowledge memory 목록 API + UI
 
 ---
 

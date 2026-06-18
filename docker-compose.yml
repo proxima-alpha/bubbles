@@ -5,6 +5,7 @@ services:
       POSTGRES_USER: bubbles
       POSTGRES_PASSWORD: bubbles
       POSTGRES_DB: bubbles
+      PGTZ: Asia/Seoul
     ports:
       - "5432:5432"
     volumes:

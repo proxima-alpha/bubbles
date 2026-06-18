@@ -17,7 +17,7 @@ def cluster(req: ClusterRequest):
     vectors = np.array(req.vectors)
     ids = req.ids
 
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=req.min_cluster_size, metric='cosine')
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=req.min_cluster_size, metric='cosine', algorithm='generic')
     labels = clusterer.fit_predict(vectors)
 
     clusters: dict[int, list[str]] = {}

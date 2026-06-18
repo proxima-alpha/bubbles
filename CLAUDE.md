@@ -38,6 +38,11 @@ Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
 - DTO는 `class-validator`로 유효성 검사
 - 환경변수는 `@nestjs/config`로 관리, 하드코딩 금지
 
+### 트랜잭션
+
+- NestJS는 자동으로 트랜잭션을 묶지 않음. 하나의 API/배치 작업에서 DB 쓰기가 여러 번 일어나면 반드시 `prisma.$transaction(async (tx) => { ... })`으로 묶을 것
+- 트랜잭션 내부에서는 `this.prisma` 대신 `tx`를 사용
+
 ### 테이블 컬럼 선언 순서
 
 PK → ID FK → Code FK → 일반 필드 → `is_xxx` boolean → `xxx_at` (추가) → `created_at` / `updated_at` / `deleted_at`
@@ -155,6 +160,12 @@ specs/
 ```
 <Keyword>: <설명>
 ```
+
+---
+
+## 불확실할 때
+
+구현 방향이 불확실하거나 해석이 여러 가지일 때는 독단적으로 결정하지 말고 먼저 질문할 것.
 
 ---
 

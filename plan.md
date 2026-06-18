@@ -198,3 +198,4 @@ bubbles/
 
 - Discord 봇 채널 추가 예정 — 별도 Spec으로 분리. 웹 완성 후 NestJS 백엔드에 Discord 봇 인터페이스만 붙이는 방식
 - knowledge memory가 많이 분화되면 knowledge memory 간 병합 단계가 필요할 수 있음 — 유사도 높은 knowledge memories를 주기적으로 consolidate하는 배치 고려
+- 메시지 임베딩 단위를 메시지 전체 → 청크(문장/의미 단위)로 쪼개면 벡터가 더 뾰족한 개념을 표현해 클러스터링/유사도 검색 품질 향상 기대. 현재 구조(message:embedding = 1:1)에서 message:chunk = 1:N으로의 전환이 필요하므로 별도 Spec으로 검토
