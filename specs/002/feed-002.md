@@ -63,7 +63,7 @@ assistant 메시지가 어떤 user 질문에 대한 응답인지 DB 레벨에서
 
 ## 구현 대상
 
-- [ ] DB 마이그레이션: `message.parent_message_id` 추가, `memory_content.order` 제거
-- [ ] `chat.service.ts`: assistant 저장 시 `parent_message_id` 설정
-- [ ] `scheduler.service.ts`: LLM 입력/출력 포맷 변경, association 기반 memory_content__message 생성
-- [ ] `LlmMemoryAnalysis` 인터페이스 업데이트
+- [x] DB 마이그레이션: `message.parent_message_id` 추가, `memory_content.order` 제거
+- [x] `chat.service.ts`: assistant 저장 시 `parent_message_id` 설정
+- [x] `scheduler.service.ts`: LLM 입력/출력 포맷 변경, association 기반 memory_content__message 생성
+- [x] `LlmMemoryAnalysis` 인터페이스 업데이트

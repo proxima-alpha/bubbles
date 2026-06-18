@@ -13,7 +13,8 @@ interface BatchMemoryResult {
 
 interface LlmMemoryAnalysis {
   keywords: { code: string; name: string }[];
-  contents: { order: number; text: string }[];
+  contents: string[];
+  association: string[][];
   summary: string;
   importance: number;
   durability: number;
@@ -22,6 +23,14 @@ interface LlmMemoryAnalysis {
   explicit_signal: number;
   llm_confidence_hint: number;
   temporary_penalty: number;
+}
+
+interface MessageForBatch {
+  id: string;
+  role: string;
+  provider: string | null;
+  content: string;
+  embedding: number[];
 }
 
 function clamp(v: number): number {
@@ -100,8 +109,8 @@ export class SchedulerService {
   async runBatch(userId: string): Promise<BatchMemoryResult[]> {
     const minClusterSize = this.config.get<number>('HDBSCAN_MIN_CLUSTER_SIZE', 2);
 
-    const unprocessed = await this.prisma.$queryRaw<{ id: string; content: string; embedding: number[] }[]>`
-      SELECT id, content, embedding::float4[] AS embedding
+    const unprocessed = await this.prisma.$queryRaw<MessageForBatch[]>`
+      SELECT id, role, provider, content, embedding::float4[] AS embedding
       FROM message
       WHERE user_id = ${userId}::uuid
         AND is_proceeded = false
@@ -147,7 +156,7 @@ export class SchedulerService {
 
   private async processCluster(
     userId: string,
-    messages: { id: string; content: string; embedding: number[] }[],
+    messages: MessageForBatch[],
   ): Promise<BatchMemoryResult> {
     const mergeMaxSimilarity = this.config.get<number>('MERGE_MAX_SIMILARITY', 0.8);
     const mergeAvgSimilarity = this.config.get<number>('MERGE_AVG_SIMILARITY', 0.7);
@@ -162,28 +171,19 @@ export class SchedulerService {
     const existingMemory = await this.findSimilarMemory(userId, clusterCentroid, mergeMaxSimilarity);
     const isMerge = existingMemory !== null && avgSimilarity >= mergeAvgSimilarity;
 
-    const contentText = messages.map(m => m.content).join('\n\n');
-    const llmInput = isMerge && existingMemory
-      ? `${existingMemory.content ?? ''}\n\n${contentText}`
-      : contentText;
-
-    const analysis = await this.callLlmForAnalysis(userId, llmInput);
+    const analysis = await this.callLlmForAnalysis(userId, messages, isMerge ? existingMemory?.content : null);
 
     return this.saveMemory(userId, messages, clusterCentroid, analysis, isMerge ? existingMemory : null);
   }
 
   private async processSingleMessage(
     userId: string,
-    msg: { id: string; content: string; embedding: number[] },
+    msg: MessageForBatch,
   ): Promise<BatchMemoryResult> {
     const mergeMaxSimilarity = this.config.get<number>('MERGE_MAX_SIMILARITY', 0.8);
 
     const existingMemory = await this.findSimilarMemory(userId, msg.embedding, mergeMaxSimilarity);
-    const llmInput = existingMemory
-      ? `${existingMemory.content ?? ''}\n\n${msg.content}`
-      : msg.content;
-
-    const analysis = await this.callLlmForAnalysis(userId, llmInput);
+    const analysis = await this.callLlmForAnalysis(userId, [msg], existingMemory?.content);
 
     return this.saveMemory(userId, [msg], msg.embedding, analysis, existingMemory);
   }
@@ -211,14 +211,31 @@ export class SchedulerService {
     return rows[0];
   }
 
-  private async callLlmForAnalysis(userId: string, contentText: string): Promise<LlmMemoryAnalysis> {
+  private async callLlmForAnalysis(
+    userId: string,
+    messages: { id: string; role: string; provider: string | null; content: string }[],
+    existingContent?: string | null,
+  ): Promise<LlmMemoryAnalysis> {
+    const inputArray = messages.map(m => ({
+      [m.role === 'user' ? 'user' : (m.provider ?? 'assistant')]: {
+        text: m.content,
+        message_id: m.id,
+      },
+    }));
+
+    const contextSection = existingContent
+      ? `[기존 메모리]\n${existingContent}\n\n`
+      : '';
+
     const prompt = `다음 대화 내용을 분석하여 JSON으로만 응답하세요.
 
-${contentText}
+${contextSection}[대화]
+${JSON.stringify(inputArray, null, 2)}
 
 {
   "keywords": [{"code": "영문-소문자-하이픈-슬러그", "name": "표시할 한국어명"}],
-  "contents": [{"order": 1, "text": "내용 청크"}],
+  "contents": ["기억할 문장1", "기억할 문장2"],
+  "association": [["assistant-message-id"], ["assistant-message-id-1", "assistant-message-id-2"]],
   "summary": "한 문장 요약",
   "importance": 0.0,
   "durability": 0.0,
@@ -229,10 +246,14 @@ ${contentText}
   "temporary_penalty": 0.0
 }
 
-// temporary_penalty: 이 정보가 장기 기억으로 남길 가치가 낮을수록 높게 부여`;
+// contents: 대화에서 기억할 문장 배열
+// association: contents와 같은 길이. association[i]는 contents[i]의 근거 message_id 목록
+// association에는 assistant message_id만 포함 (user 메시지 제외)
+// association[i]가 비어있는 contents[i]는 반환하지 말 것
+// temporary_penalty: 장기 기억 가치가 낮을수록 높게 (오늘 날씨 → 높음, 직업/가치관 → 낮음)`;
 
-    const messages = [{ role: 'user' as const, content: prompt }];
-    const fullContent = await this.modelService.chat(userId, messages, { num_predict: 1024 });
+    const llmMessages = [{ role: 'user' as const, content: prompt }];
+    const fullContent = await this.modelService.chat(userId, llmMessages, { num_predict: 1024 });
 
     const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
@@ -241,7 +262,7 @@ ${contentText}
 
   private async saveMemory(
     userId: string,
-    messages: { id: string; content: string; embedding: number[] }[],
+    messages: MessageForBatch[],
     memCentroid: number[],
     analysis: LlmMemoryAnalysis,
     existingMemory: { id: string; version: number; root_memory_id: string | null } | null,
@@ -272,7 +293,13 @@ ${contentText}
       0.30 * clamp(analysis.temporary_penalty),
     );
 
-    const contentText = messages.map(m => m.content).join('\n\n');
+    const contents = analysis.contents ?? [];
+    const association = analysis.association ?? [];
+    const validPairs = contents
+      .map((sentence, i) => ({ sentence, messageIds: association[i] ?? [] }))
+      .filter(p => p.messageIds.length > 0);
+
+    const memoryContent = validPairs.map(p => p.sentence).join('\n');
 
     const { newMemory } = await this.prisma.$transaction(async (tx) => {
       if (existingMemory) {
@@ -303,7 +330,7 @@ ${contentText}
           confirmed_score: confirmedScore,
           temporary_penalty: clamp(analysis.temporary_penalty),
           summary: analysis.summary,
-          content: contentText,
+          content: memoryContent,
         },
       });
 
@@ -311,13 +338,13 @@ ${contentText}
         UPDATE memory SET embedding = ${`[${memCentroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
       `;
 
-      const contentRows = (analysis.contents ?? []).map(c => ({
-        memory_id: newMemory.id,
-        content: c.text,
-        order: c.order,
-      }));
-      if (contentRows.length > 0) {
-        await tx.memory_content.createMany({ data: contentRows });
+      for (const { sentence, messageIds } of validPairs) {
+        const mc = await tx.memory_content.create({
+          data: { memory_id: newMemory.id, content: sentence },
+        });
+        await tx.memory_content__message.createMany({
+          data: messageIds.map(mid => ({ memory_content_id: mc.id, message_id: mid })),
+        });
       }
 
       for (const kw of (analysis.keywords ?? []).filter(k => k.code && /^[a-z0-9-]+$/.test(k.code))) {
@@ -330,16 +357,6 @@ ${contentText}
           VALUES (${newMemory.id}::uuid, ${kw.code})
           ON CONFLICT DO NOTHING
         `;
-      }
-
-      const firstContent = await tx.memory_content.findFirst({
-        where: { memory_id: newMemory.id },
-        orderBy: { order: 'asc' },
-      });
-      if (firstContent) {
-        await tx.memory_content__message.createMany({
-          data: messages.map(m => ({ memory_content_id: firstContent.id, message_id: m.id })),
-        });
       }
 
       await tx.message.updateMany({
