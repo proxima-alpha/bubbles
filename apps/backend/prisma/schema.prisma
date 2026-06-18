@@ -92,14 +92,17 @@ model message {
   content           String                     @db.Text
   input_tokens      Int?
   output_tokens     Int?
+  parent_message_id String?                    @db.Uuid
   embedding         Unsupported("vector(768)")?
   is_proceeded      Boolean                    @default(false)
   created_at        DateTime                   @default(now()) @db.Timestamptz
 
-  user          user        @relation(fields: [user_id], references: [id])
-  role_code     common_code  @relation("message_role",     fields: [role_category, role],         references: [category_code, code])
-  provider_code common_code? @relation("message_provider", fields: [provider_category, provider],  references: [category_code, code])
-  model_code    common_code? @relation("message_model",    fields: [model_category, model],        references: [category_code, code])
+  user           user        @relation(fields: [user_id], references: [id])
+  role_code      common_code  @relation("message_role",     fields: [role_category, role],         references: [category_code, code])
+  provider_code  common_code? @relation("message_provider", fields: [provider_category, provider],  references: [category_code, code])
+  model_code     common_code? @relation("message_model",    fields: [model_category, model],        references: [category_code, code])
+  parent_message message?     @relation("message_parent",   fields: [parent_message_id],           references: [id])
+  child_messages message[]    @relation("message_parent")
 
   memory_content_messages memory_content__message[]
 }
@@ -153,7 +156,6 @@ model memory_content {
   id         String   @id @default(uuid()) @db.Uuid
   memory_id  String   @db.Uuid
   content    String   @db.Text
-  order      Int
   created_at DateTime @default(now()) @db.Timestamptz
 
   memory   memory                    @relation(fields: [memory_id], references: [id])
