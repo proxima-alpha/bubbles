@@ -232,11 +232,7 @@ ${contentText}
 // temporary_penalty: 이 정보가 장기 기억으로 남길 가치가 낮을수록 높게 부여`;
 
     const messages = [{ role: 'user' as const, content: prompt }];
-    let fullContent = '';
-
-    for await (const token of this.modelService.chatStream(userId, messages)) {
-      fullContent += token;
-    }
+    const fullContent = await this.modelService.chat(userId, messages, { num_predict: 1024 });
 
     const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
@@ -276,86 +272,82 @@ ${contentText}
       0.30 * clamp(analysis.temporary_penalty),
     );
 
-    if (existingMemory) {
-      await this.prisma.memory.update({
-        where: { id: existingMemory.id },
-        data: { is_active: false, deactivated_at: now },
-      });
-    }
-
     const contentText = messages.map(m => m.content).join('\n\n');
 
-    const newMemory = await this.prisma.memory.create({
-      data: {
-        user_id: userId,
-        type: 'knowledge',
-        history_type: existingMemory ? 'renewed' : 'created',
-        version: existingMemory ? existingMemory.version + 1 : 1,
-        parent_memory_id: existingMemory?.id ?? null,
-        root_memory_id: existingMemory
-          ? (existingMemory.root_memory_id ?? existingMemory.id)
-          : null,
-        score,
-        scored_at: now,
-        sensitivity: clamp(analysis.sensitivity),
-        importance,
-        durability: clamp(analysis.durability),
-        reusefulness: clamp(analysis.reusefulness),
-        explicit_signal: clamp(analysis.explicit_signal),
-        llm_confidence_hint: clamp(analysis.llm_confidence_hint),
-        confirmed_score: confirmedScore,
-        temporary_penalty: clamp(analysis.temporary_penalty),
-        summary: analysis.summary,
-      },
-    });
+    const { newMemory } = await this.prisma.$transaction(async (tx) => {
+      if (existingMemory) {
+        await tx.memory.update({
+          where: { id: existingMemory.id },
+          data: { is_active: false, deactivated_at: now },
+        });
+      }
 
-    // embedding 저장
-    await this.prisma.$executeRaw`
-      UPDATE memory SET embedding = ${`[${memCentroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
-    `;
-
-    // memory_contents 생성
-    const contentRows = analysis.contents.map(c => ({
-      memory_id: newMemory.id,
-      content: c.text,
-      order: c.order,
-    }));
-    await this.prisma.memory_content.createMany({ data: contentRows });
-
-    // memory.content 갱신 (원문 합산)
-    await this.prisma.memory.update({
-      where: { id: newMemory.id },
-      data: { content: contentText },
-    });
-
-    // keywords upsert + memory__keyword 연결
-    for (const kw of analysis.keywords) {
-      await this.prisma.$executeRaw`
-        INSERT INTO keyword (code, name) VALUES (${kw.code}, ${kw.name})
-        ON CONFLICT (code) DO NOTHING
-      `;
-      await this.prisma.$executeRaw`
-        INSERT INTO memory__keyword (memory_id, keyword_code)
-        VALUES (${newMemory.id}::uuid, ${kw.code})
-        ON CONFLICT DO NOTHING
-      `;
-    }
-
-    // memory_contents와 messages 연결
-    const firstContent = await this.prisma.memory_content.findFirst({
-      where: { memory_id: newMemory.id },
-      orderBy: { order: 'asc' },
-    });
-    if (firstContent) {
-      await this.prisma.memory_content__message.createMany({
-        data: messages.map(m => ({ memory_content_id: firstContent.id, message_id: m.id })),
+      const newMemory = await tx.memory.create({
+        data: {
+          user_id: userId,
+          type: 'knowledge',
+          history_type: existingMemory ? 'renewed' : 'created',
+          version: existingMemory ? existingMemory.version + 1 : 1,
+          parent_memory_id: existingMemory?.id ?? null,
+          root_memory_id: existingMemory
+            ? (existingMemory.root_memory_id ?? existingMemory.id)
+            : null,
+          score,
+          scored_at: now,
+          sensitivity: clamp(analysis.sensitivity),
+          importance,
+          durability: clamp(analysis.durability),
+          reusefulness: clamp(analysis.reusefulness),
+          explicit_signal: clamp(analysis.explicit_signal),
+          llm_confidence_hint: clamp(analysis.llm_confidence_hint),
+          confirmed_score: confirmedScore,
+          temporary_penalty: clamp(analysis.temporary_penalty),
+          summary: analysis.summary,
+          content: contentText,
+        },
       });
-    }
 
-    // messages is_proceeded = true
-    await this.prisma.message.updateMany({
-      where: { id: { in: messages.map(m => m.id) } },
-      data: { is_proceeded: true },
+      await tx.$executeRaw`
+        UPDATE memory SET embedding = ${`[${memCentroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
+      `;
+
+      const contentRows = (analysis.contents ?? []).map(c => ({
+        memory_id: newMemory.id,
+        content: c.text,
+        order: c.order,
+      }));
+      if (contentRows.length > 0) {
+        await tx.memory_content.createMany({ data: contentRows });
+      }
+
+      for (const kw of (analysis.keywords ?? []).filter(k => k.code && /^[a-z0-9-]+$/.test(k.code))) {
+        await tx.$executeRaw`
+          INSERT INTO keyword (code, name) VALUES (${kw.code}, ${kw.name})
+          ON CONFLICT (code) DO NOTHING
+        `;
+        await tx.$executeRaw`
+          INSERT INTO memory__keyword (memory_id, keyword_code)
+          VALUES (${newMemory.id}::uuid, ${kw.code})
+          ON CONFLICT DO NOTHING
+        `;
+      }
+
+      const firstContent = await tx.memory_content.findFirst({
+        where: { memory_id: newMemory.id },
+        orderBy: { order: 'asc' },
+      });
+      if (firstContent) {
+        await tx.memory_content__message.createMany({
+          data: messages.map(m => ({ memory_content_id: firstContent.id, message_id: m.id })),
+        });
+      }
+
+      await tx.message.updateMany({
+        where: { id: { in: messages.map(m => m.id) } },
+        data: { is_proceeded: true },
+      });
+
+      return { newMemory };
     });
 
     return {

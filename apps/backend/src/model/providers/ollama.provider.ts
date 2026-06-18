@@ -24,6 +24,22 @@ export class OllamaProvider {
     return data.embedding as number[];
   }
 
+  async chat(
+    baseUrl: string,
+    model: string,
+    messages: LlmMessage[],
+    options?: { num_predict?: number },
+  ): Promise<string> {
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages, stream: false, think: false, enable_thinking: false, ...(options && { options }) }),
+    });
+    if (!res.ok) throw new InternalServerErrorException(`Ollama error: ${res.status}`);
+    const data = await res.json();
+    return data.message?.content ?? '';
+  }
+
   async *chatStream(
     baseUrl: string,
     model: string,
@@ -32,7 +48,7 @@ export class OllamaProvider {
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: true }),
+      body: JSON.stringify({ model, messages, stream: true, think: false, enable_thinking: false }),
     });
 
     if (!res.ok || !res.body) throw new InternalServerErrorException(`Ollama error: ${res.status}`);
