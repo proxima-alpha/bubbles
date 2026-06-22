@@ -15,6 +15,8 @@ const target_ids: string[] = ['c4425f73-5f1c-4d24-8f92-fd074d88167e'];
 describe('SchedulerService (manual)', () => {
   let service: SchedulerService;
 
+  jest.setTimeout(0);
+
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       imports: [
@@ -39,6 +41,5 @@ describe('SchedulerService (manual)', () => {
       console.log(`[${userId}] processed ${results.length} memories`, results);
       await service.updateMainMemory(userId, results);
     },
-    120000,
   );
 });

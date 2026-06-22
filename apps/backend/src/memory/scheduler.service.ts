@@ -3,7 +3,13 @@ import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { ModelService } from '../model/model.service';
-import { MemoryRepository, BatchMemoryResult, LlmMemoryAnalysis, MessageForBatch, SaveArgs } from './memory.repository';
+import { MemoryRepository, BatchMemoryResult, LlmMemoryAnalysis, MessageForBatch, Exchange, SaveArgs } from './memory.repository';
+
+interface GroupArgs {
+  messages: MessageForBatch[];
+  memCentroid: number[];
+  existingMemory: { id: string; content: string | null; version: number; root_memory_id: string | null } | null;
+}
 
 function centroid(vectors: number[][]): number[] {
   if (vectors.length === 0) return [];
@@ -59,69 +65,72 @@ export class SchedulerService {
   }
 
   async runBatch(userId: string): Promise<BatchMemoryResult[]> {
-    const minClusterSize = this.config.get<number>('HDBSCAN_MIN_CLUSTER_SIZE', 2);
+    const minClusterSize = this.config.get<number>('CLUSTERING_MIN_CLUSTER_SIZE', 2);
 
-    const unprocessed = await this.memoryRepo.findUnprocessedMessages(userId);
-    if (unprocessed.length === 0) return [];
+    const exchanges = await this.memoryRepo.findUnprocessedExchanges(userId);
+    if (exchanges.length === 0) return [];
 
-    const pendingSaves: SaveArgs[] = [];
+    const groups: GroupArgs[] = [];
 
-    if (unprocessed.length < minClusterSize) {
-      for (const msg of unprocessed) {
-        pendingSaves.push(await this.prepareSingleMessage(userId, msg));
+    if (exchanges.length < minClusterSize) {
+      for (const exchange of exchanges) {
+        groups.push(await this.prepareGroup(userId, [exchange]));
       }
     } else {
-      const vectors = unprocessed.map(m => m.embedding);
-      const ids = unprocessed.map(m => m.id);
+      const vectors = exchanges.map(e => e.embedding);
+      const ids = exchanges.map(e => e.id);
 
       const clusterResult = await this.runClustering(vectors, ids);
-      const msgMap = new Map(unprocessed.map(m => [m.id, m]));
+      const exchangeMap = new Map(exchanges.map(e => [e.id, e]));
 
-      const clusterArgs = await Promise.all(
+      const clusterGroups = await Promise.all(
         clusterResult.clusters.map((cluster: { label: number; ids: string[] }) =>
-          this.prepareCluster(userId, cluster.ids.map((id: string) => msgMap.get(id)!)),
+          this.prepareGroup(userId, cluster.ids.map((id: string) => exchangeMap.get(id)!)),
         ),
       );
-      for (const args of clusterArgs) pendingSaves.push(args);
+      for (const g of clusterGroups) groups.push(g);
 
       for (const noiseId of clusterResult.noise) {
-        pendingSaves.push(await this.prepareSingleMessage(userId, msgMap.get(noiseId)!));
+        groups.push(await this.prepareGroup(userId, [exchangeMap.get(noiseId)!]));
       }
     }
 
+    const pendingSaves: SaveArgs[] = [];
+    for (const group of groups) {
+      const analysis = await this.callLlmForAnalysis(userId, group.messages, group.existingMemory?.content);
+      pendingSaves.push({ ...group, analysis });
+    }
+
+    const allMessages = exchanges.flatMap(e => e.messages);
     return this.prisma.$transaction(async (tx) => {
       const batchResults: BatchMemoryResult[] = [];
       for (const args of pendingSaves) {
         batchResults.push(await this.memoryRepo.saveMemory(tx, userId, args));
       }
-      await this.memoryRepo.updateRepetitionStrength(tx, userId, unprocessed, batchResults.map(r => r.id));
+      await this.memoryRepo.updateRepetitionStrength(tx, userId, allMessages, batchResults.map(r => r.id));
       return batchResults;
     });
   }
 
-  private async prepareCluster(userId: string, messages: MessageForBatch[]): Promise<SaveArgs> {
+  private async prepareGroup(userId: string, exchanges: Exchange[]): Promise<GroupArgs> {
     const mergeMaxSimilarity = this.config.get<number>('MERGE_MAX_SIMILARITY', 0.8);
     const mergeAvgSimilarity = this.config.get<number>('MERGE_AVG_SIMILARITY', 0.7);
 
-    const clusterVectors = messages.map(m => m.embedding);
-    const clusterCentroid = centroid(clusterVectors);
+    const exchangeEmbeddings = exchanges.map(e => e.embedding);
+    const clusterCentroid = centroid(exchangeEmbeddings);
 
     const avgSimilarity =
-      clusterVectors.reduce((acc, v) => acc + cosineSimilarity(v, clusterCentroid), 0) /
-      clusterVectors.length;
+      exchangeEmbeddings.reduce((acc, v) => acc + cosineSimilarity(v, clusterCentroid), 0) /
+      exchangeEmbeddings.length;
 
     const existingMemory = await this.memoryRepo.findSimilarMemory(userId, clusterCentroid, mergeMaxSimilarity);
     const isMerge = existingMemory !== null && avgSimilarity >= mergeAvgSimilarity;
-    const analysis = await this.callLlmForAnalysis(userId, messages, isMerge ? existingMemory?.content : null);
 
-    return { messages, memCentroid: clusterCentroid, analysis, existingMemory: isMerge ? existingMemory : null };
-  }
-
-  private async prepareSingleMessage(userId: string, msg: MessageForBatch): Promise<SaveArgs> {
-    const mergeMaxSimilarity = this.config.get<number>('MERGE_MAX_SIMILARITY', 0.8);
-    const existingMemory = await this.memoryRepo.findSimilarMemory(userId, msg.embedding, mergeMaxSimilarity);
-    const analysis = await this.callLlmForAnalysis(userId, [msg], existingMemory?.content);
-    return { messages: [msg], memCentroid: msg.embedding, analysis, existingMemory };
+    return {
+      messages: exchanges.flatMap(e => e.messages),
+      memCentroid: clusterCentroid,
+      existingMemory: isMerge ? existingMemory : null,
+    };
   }
 
   private async callLlmForAnalysis(
@@ -172,11 +181,12 @@ ${JSON.stringify(inputArray, null, 2)}
 
   private async runClustering(vectors: number[][], ids: string[]) {
     const url = this.config.get<string>('CLUSTERING_URL', 'http://clustering:8000');
-    const minClusterSize = this.config.get<number>('HDBSCAN_MIN_CLUSTER_SIZE', 2);
+    const minClusterSize = this.config.get<number>('CLUSTERING_MIN_CLUSTER_SIZE', 2);
+    const similarityThreshold = this.config.get<number>('CLUSTERING_SIMILARITY_THRESHOLD', 0.95);
     const res = await fetch(`${url}/cluster`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vectors, ids, min_cluster_size: minClusterSize }),
+      body: JSON.stringify({ vectors, ids, min_cluster_size: minClusterSize, similarity_threshold: similarityThreshold }),
     });
     if (!res.ok) throw new Error(`Clustering error: ${res.status}`);
     return res.json();

@@ -32,6 +32,12 @@ export interface MessageForBatch {
   embedding: number[];
 }
 
+export interface Exchange {
+  id: string; // assistant message ID (or standalone message ID)
+  messages: MessageForBatch[];
+  embedding: number[]; // centroid of message embeddings in this exchange
+}
+
 export interface SaveArgs {
   messages: MessageForBatch[];
   memCentroid: number[];
@@ -54,6 +60,13 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
+function centroid(vectors: number[][]): number[] {
+  const dim = vectors[0].length;
+  const sum = new Array<number>(dim).fill(0);
+  for (const v of vectors) for (let i = 0; i < dim; i++) sum[i] += v[i];
+  return sum.map(x => x / vectors.length);
+}
+
 @Injectable()
 export class MemoryRepository {
   constructor(
@@ -61,15 +74,40 @@ export class MemoryRepository {
     private config: ConfigService,
   ) {}
 
-  async findUnprocessedMessages(userId: string): Promise<MessageForBatch[]> {
-    return this.prisma.$queryRaw<MessageForBatch[]>`
-      SELECT id, role, provider, content, embedding::float4[] AS embedding
+  async findUnprocessedExchanges(userId: string): Promise<Exchange[]> {
+    const rows = await this.prisma.$queryRaw<(MessageForBatch & { parent_message_id: string | null })[]>`
+      SELECT id, role, provider, content, embedding::float4[] AS embedding, parent_message_id
       FROM message
       WHERE user_id = ${userId}::uuid
         AND is_proceeded = false
         AND embedding IS NOT NULL
       ORDER BY created_at ASC
     `;
+
+    const msgById = new Map(rows.map(m => [m.id, m]));
+    const usedIds = new Set<string>();
+    const exchanges: Exchange[] = [];
+
+    // 1st pass: assistant 메시지 기준으로 user 메시지와 페어링
+    for (const msg of rows) {
+      if (msg.role === 'user' || !msg.parent_message_id) continue;
+      const parent = msgById.get(msg.parent_message_id);
+      if (!parent || usedIds.has(parent.id) || usedIds.has(msg.id)) continue;
+
+      const msgs = [parent, msg];
+      exchanges.push({ id: msg.id, messages: msgs, embedding: centroid(msgs.map(m => m.embedding)) });
+      usedIds.add(parent.id);
+      usedIds.add(msg.id);
+    }
+
+    // 2nd pass: 페어링 안 된 메시지는 standalone exchange
+    for (const msg of rows) {
+      if (usedIds.has(msg.id)) continue;
+      exchanges.push({ id: msg.id, messages: [msg], embedding: msg.embedding });
+      usedIds.add(msg.id);
+    }
+
+    return exchanges;
   }
 
   async findUsersOverThreshold(threshold: number): Promise<string[]> {
