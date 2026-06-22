@@ -29,9 +29,9 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
   - **main memory** — knowledge memories를 압축한 단일 텍스트. 스케줄러 실행마다 재생성
 - 스케줄러는 조건 기반으로 트리거 (매초 폴링 아님): 미처리 messages가 N개 이상 쌓이거나 마지막 처리 후 1일이 경과하면 배치 실행. N은 추후 결정:
 
-  - 미처리 messages 임베딩 → 벡터 클러스터링 (HDBSCAN, 클러스터 수 가변)
+  - 미처리 messages를 user+assistant 쌍(exchange) 단위로 묶은 뒤 exchange centroid 임베딩 → 벡터 클러스터링 (AgglomerativeClustering, single linkage, similarity threshold 기반)
   - 각 클러스터 ↔ 기존 knowledge memories 비교. merge 조건: `centroid similarity >= 0.8 AND 클러스터 내부 평균 similarity >= 0.7`. 미충족 시 신규 생성. merge 후 해당 knowledge memory 임베딩 재계산
-  - HDBSCAN 노이즈 포인트는 `proceeded = false` 유지, 다음 배치 시 새 미처리 messages와 합쳐서 재클러스터링
+  - 클러스터 크기 미달(min_cluster_size) exchange는 noise로 분류 — 단일 exchange로 즉시 처리 후 `proceeded = true`
   - merge / 생성 시 LLM으로 키워드 + 점수 산정 (클러스터 수만큼 병렬 호출)
   - 승격 조건(`is_pinned = true OR (score > 0.9 AND sensitivity <= 0.3)`)을 만족하는 knowledge memories + 기존 main memory → LLM 1회 → main memory 재생성
   - 클러스터에 포함된 messages는 `proceeded = true` 업데이트 + knowledge memory FK 연결. 노이즈 포인트는 `proceeded = false` 유지 (다음 배치에서 재처리)
@@ -76,7 +76,7 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
 - **Prisma** (ORM, 마이그레이션)
 - **PostgreSQL** + **pgvector** 확장 (대화 기록 + 벡터 저장 통합)
 - **Ollama** (로컬 임베딩 모델 서빙 — `nomic-embed-text`)
-- **Python 스크립트** (HDBSCAN 클러스터링 전용, NestJS에서 커맨드 실행으로 호출. stdin/stdout으로 데이터 교환, 파일 I/O 없음)
+- **Python FastAPI 서버** (AgglomerativeClustering 전용, NestJS에서 HTTP 호출)
 
 > ChromaDB 미사용: pgvector로 대체하여 Docker 서비스 수를 줄임 (별도 벡터 DB 불필요)
 
@@ -86,7 +86,7 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
   - `backend` — NestJS
   - `db` — PostgreSQL (pgvector 확장 포함)
   - `ollama` — 로컬 임베딩 모델
-  - `clustering` — Python 컨테이너 (HDBSCAN 스크립트 실행 전용)
+  - `clustering` — Python 컨테이너 (AgglomerativeClustering FastAPI 서버)
 - 추후 배포: Railway / Render / VPS (Docker 그대로)
 
 ---
@@ -105,7 +105,7 @@ NestJS API
     │     └── LLM API 호출 → { message } 반환
     │
     ├── MemoryModule
-    │     ├── 스케줄러: 미처리 messages 임베딩 → HDBSCAN 클러스터링
+    │     ├── 스케줄러: 미처리 messages → exchange 페어링 → AgglomerativeClustering
     │     ├── 스케줄러: 클러스터 ↔ knowledge memories cosine similarity 비교 → merge or 신규 생성
     │     ├── 스케줄러: merge/생성 시 LLM으로 키워드 + 점수 산정
     │     ├── 스케줄러: 승격 조건 만족 knowledge memories + 기존 main memory → LLM → main memory 재생성
@@ -158,7 +158,7 @@ bubbles/
 ### Spec 2 — RAG 파이프라인
 - [ ] (1) LLM 응답 구조화 포맷 정의 (message)
 - [ ] (2) Ollama 임베딩 연동 (message 저장 시 embedding 생성)
-- [ ] (3) 스케줄러: 미처리 messages 임베딩 → 벡터 클러스터링 (HDBSCAN)
+- [ ] (3) 스케줄러: 미처리 messages → exchange 페어링 → 벡터 클러스터링 (AgglomerativeClustering)
 - [ ] (4) 스케줄러: 클러스터 ↔ 기존 knowledge memories 유사도 비교 → merge or 신규 생성 + LLM으로 키워드/점수 산정
 - [ ] (5) 스케줄러: 승격 조건 만족하는 knowledge memories + 기존 main memory → LLM → main memory 재생성
 - [ ] (6) 컨텍스트 조립: main memory + top N knowledge memories (RAG) + 최근 messages

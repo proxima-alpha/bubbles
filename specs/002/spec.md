@@ -11,7 +11,7 @@
 - [x] (1) DB 마이그레이션: memory 점수 컴포넌트 컬럼 + score + embedding 추가, message 토큰 사용량 컬럼 추가
 - [x] (2) Ollama 임베딩 연동 (message 저장 시 embedding 생성, 실패 시 재시도 후 에러 반환)
 - [x] (3) 스케줄러 기반 구조 + 트리거 조건
-- [x] (4) clustering FastAPI 서버 구현 (HDBSCAN)
+- [x] (4) clustering FastAPI 서버 구현 (AgglomerativeClustering, similarity threshold 기반)
 - [x] (5) 클러스터 → knowledge memory 생성/merge + LLM 키워드/점수 산정
 - [x] (6) 승격 조건 knowledge memories → main memory 재생성
 - [x] (7) 컨텍스트 조립: 시스템 프롬프트 + RAG + 최근 messages
@@ -263,7 +263,8 @@ RECENCY_DECAY_FACTOR=30             # recency 감쇠 계수 (일 단위)
 
 # Clustering
 CLUSTERING_URL=http://clustering:8000
-HDBSCAN_MIN_CLUSTER_SIZE=2          # HDBSCAN 최소 클러스터 크기
+CLUSTERING_MIN_CLUSTER_SIZE=2       # 최소 클러스터 크기 (미달 시 noise 처리)
+CLUSTERING_SIMILARITY_THRESHOLD=0.95 # 이 값 이상이면 같은 클러스터로 묶음
 MAX_CLUSTER_SIZE=50                 # cluster_size_score 정규화 기준값
 
 # Memory merge 조건
@@ -367,33 +368,45 @@ async checkAndRun() {
 - 로컬 실행: `cd apps/clustering && uvicorn main:app --port 8000`
 - NestJS → `POST http://clustering:8000/cluster` HTTP 호출
 
-### apps/clustering/main.py (FastAPI로 교체)
+### apps/clustering/main.py
 
 ```python
 from fastapi import FastAPI
 from pydantic import BaseModel
 import numpy as np
-import hdbscan
+from sklearn.cluster import AgglomerativeClustering
+from collections import Counter
 
 app = FastAPI()
 
 class ClusterRequest(BaseModel):
     vectors: list[list[float]]
     ids: list[str]
-    min_cluster_size: int = 2
+    min_cluster_size: int
+    similarity_threshold: float
 
 @app.post("/cluster")
 def cluster(req: ClusterRequest):
     vectors = np.array(req.vectors)
     ids = req.ids
 
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=req.min_cluster_size, metric='cosine')
-    labels = clusterer.fit_predict(vectors)
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    normed = vectors / np.where(norms == 0, 1, norms)
+    sim_matrix = normed @ normed.T
+    distance_matrix = np.clip(1 - sim_matrix, 0, 2)
 
+    distance_threshold = 1 - req.similarity_threshold
+    model = AgglomerativeClustering(
+        n_clusters=None, metric='precomputed',
+        linkage='single', distance_threshold=distance_threshold,
+    )
+    labels = model.fit_predict(distance_matrix)
+
+    label_counts = Counter(labels)
     clusters: dict[int, list[str]] = {}
     noise: list[str] = []
     for idx, label in enumerate(labels):
-        if label == -1:
+        if label_counts[label] < req.min_cluster_size:
             noise.append(ids[idx])
         else:
             clusters.setdefault(int(label), []).append(ids[idx])
@@ -404,12 +417,14 @@ def cluster(req: ClusterRequest):
     }
 ```
 
-### apps/clustering/requirements.txt (업데이트)
+- `linkage='single'`: 두 exchange 중 하나라도 similarity >= threshold면 같은 클러스터로 묶음
+- noise: `min_cluster_size` 미달 클러스터 → 즉시 단일 exchange로 처리 후 `is_proceeded = true`
+
+### apps/clustering/requirements.txt
 
 ```
 fastapi
 uvicorn[standard]
-hdbscan
 numpy
 scikit-learn
 ```
@@ -442,11 +457,12 @@ clustering:
 // scheduler.service.ts
 private async runClustering(vectors: number[][], ids: string[]) {
   const url = this.config.get('CLUSTERING_URL', 'http://clustering:8000');
-  const minClusterSize = this.config.get<number>('HDBSCAN_MIN_CLUSTER_SIZE', 2);
+  const minClusterSize = this.config.get<number>('CLUSTERING_MIN_CLUSTER_SIZE', 2);
+  const similarityThreshold = this.config.get<number>('CLUSTERING_SIMILARITY_THRESHOLD', 0.95);
   const res = await fetch(`${url}/cluster`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ vectors, ids, min_cluster_size: minClusterSize }),
+    body: JSON.stringify({ vectors, ids, min_cluster_size: minClusterSize, similarity_threshold: similarityThreshold }),
   });
   if (!res.ok) throw new Error(`Clustering error: ${res.status}`);
   return res.json();
@@ -456,6 +472,14 @@ private async runClustering(vectors: number[][], ids: string[]) {
 ---
 
 ## 5. 클러스터 → Knowledge Memory 생성/Merge
+
+### Exchange 페어링
+
+클러스터링 전에 미처리 messages를 exchange 단위로 묶는다:
+- **assistant 메시지 기준 (1st pass)**: `parent_message_id`로 연결된 user 메시지와 페어링 → 1 exchange (centroid embedding 사용)
+- **standalone (2nd pass)**: 페어링 안 된 메시지는 단독 exchange
+
+exchange는 클러스터링의 단위 벡터로 사용됨.
 
 ### 로직 흐름
 
@@ -492,7 +516,7 @@ private async runClustering(vectors: number[][], ids: string[]) {
      (attribution 없는 contents 행은 저장 금지)
      memory.content = contents 배열을 \n으로 join하여 저장
      포함 messages: is_proceeded = true
-  8. 노이즈: 즉시 단일 메시지 케이스 로직 적용 → is_proceeded = true
+  8. 노이즈(min_cluster_size 미달): 단일 exchange로 즉시 처리 → is_proceeded = true
      처리된 memory도 반환 목록에 포함
   9. repetition_strength 갱신: 이번 배치에서 is_proceeded = true된 messages의 embedding과
      이번 배치 이전부터 존재하던 knowledge memories (batchResults ids 제외) embedding 비교.
@@ -501,9 +525,9 @@ private async runClustering(vectors: number[][], ids: string[]) {
 반환: 클러스터 + 노이즈 경로로 생성/merge된 전체 memory rows (id, is_pinned, score, sensitivity)
 ```
 
-### 단일 메시지 케이스 (미처리 메시지 수 < HDBSCAN_MIN_CLUSTER_SIZE)
+### 단일 메시지 케이스 (미처리 exchange 수 < CLUSTERING_MIN_CLUSTER_SIZE)
 
-clustering 서버 호출 없이 메시지 embedding을 기존 knowledge memories와 직접 비교:
+clustering 서버 호출 없이 exchange 단위로 각각 처리:
 
 ```
 1. 메시지 embedding과 기존 knowledge memories 간 cosine similarity 계산
