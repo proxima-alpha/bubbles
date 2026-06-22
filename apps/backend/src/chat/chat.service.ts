@@ -1,9 +1,9 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
-import { PrismaService } from '../prisma/prisma.service';
 import { ModelService } from '../model/model.service';
 import { MemoryService } from '../memory/memory.service';
+import { ChatRepository } from './chat.repository';
 import { SendMessageDto } from './dto/send-message.dto';
 
 function buildSystemPrompt(mainMemory: string | null, knowledgeItems: string[]): string {
@@ -16,27 +16,22 @@ function buildSystemPrompt(mainMemory: string | null, knowledgeItems: string[]):
 @Injectable()
 export class ChatService {
   constructor(
-    private prisma: PrismaService,
+    private chatRepo: ChatRepository,
     private modelService: ModelService,
     private memoryService: MemoryService,
     private config: ConfigService,
   ) {}
 
   async sendMessageStream(userId: string, dto: SendMessageDto, res: Response) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.chatRepo.findUserById(userId);
     if (!user?.model) throw new ForbiddenException('No model selected');
 
-    const userMsg = await this.prisma.message.create({
-      data: { user_id: userId, role: 'user', content: dto.content },
-    });
+    const userMsg = await this.chatRepo.createMessage({ user_id: userId, role: 'user', content: dto.content });
 
     let queryEmbedding: number[];
     try {
       queryEmbedding = await this.modelService.embedTextChunked(dto.content);
-      const queryVec = `[${queryEmbedding.join(',')}]`;
-      await this.prisma.$executeRaw`
-        UPDATE message SET embedding = ${queryVec}::vector WHERE id = ${userMsg.id}::uuid
-      `;
+      await this.chatRepo.setMessageEmbedding(userMsg.id, queryEmbedding);
     } catch (e) {
       res.status(503).json({ message: '잠시 후 재시도해주세요.' });
       return;
@@ -48,16 +43,9 @@ export class ChatService {
       this.memoryService.getTopKnowledge(userId, queryEmbedding, topK),
     ]);
 
-    const systemPrompt = buildSystemPrompt(
-      mainMemory,
-      topKnowledge.map(m => m.summary),
-    );
+    const systemPrompt = buildSystemPrompt(mainMemory, topKnowledge.map(m => m.summary));
 
-    const recentMessages = await this.prisma.message.findMany({
-      where: { user_id: userId },
-      orderBy: { created_at: 'desc' },
-      take: 20,
-    });
+    const recentMessages = await this.chatRepo.findRecentMessages(userId, 20);
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
@@ -89,23 +77,19 @@ export class ChatService {
       res.write(`data: ${JSON.stringify({ token: value })}\n\n`);
     }
 
-    const assistantMsg = await this.prisma.message.create({
-      data: {
-        user_id: userId,
-        role: 'assistant',
-        provider,
-        model,
-        content: fullContent,
-        input_tokens: tokenCounts.inputTokens,
-        output_tokens: tokenCounts.outputTokens,
-        parent_message_id: userMsg.id,
-      },
+    const assistantMsg = await this.chatRepo.createMessage({
+      user_id: userId,
+      role: 'assistant',
+      provider,
+      model,
+      content: fullContent,
+      input_tokens: tokenCounts.inputTokens,
+      output_tokens: tokenCounts.outputTokens,
+      parent_message_id: userMsg.id,
     });
 
     void this.modelService.embedTextChunked(fullContent)
-      .then(vec => this.prisma.$executeRaw`
-        UPDATE message SET embedding = ${`[${vec.join(',')}]`}::vector WHERE id = ${assistantMsg.id}::uuid
-      `)
+      .then(vec => this.chatRepo.setMessageEmbedding(assistantMsg.id, vec))
       .catch(e => console.error('assistant embed failed', e));
 
     res.write(`data: [DONE]\n\n`);
@@ -113,11 +97,7 @@ export class ChatService {
   }
 
   async getHistory(userId: string) {
-    const messages = await this.prisma.message.findMany({
-      where: { user_id: userId },
-      orderBy: { created_at: 'desc' },
-      include: { provider_code: true, model_code: true },
-    });
+    const messages = await this.chatRepo.findHistory(userId);
 
     return messages.map(m => ({
       id: m.id,

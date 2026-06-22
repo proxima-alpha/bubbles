@@ -34,14 +34,29 @@ Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
 
 ### Backend (NestJS)
 - 기능 단위로 Module 분리 (ChatModule, MemoryModule, KeywordModule, ConfigModule)
-- 비즈니스 로직은 Service에, 라우팅은 Controller에
+- 역할 분리: Controller(라우팅) → Service(비즈니스 로직) → Repository(DB 접근)
 - DTO는 `class-validator`로 유효성 검사
 - 환경변수는 `@nestjs/config`로 관리, 하드코딩 금지
 
-### 트랜잭션
+### Repository 패턴
 
-- NestJS는 자동으로 트랜잭션을 묶지 않음. 하나의 API/배치 작업에서 DB 쓰기가 여러 번 일어나면 반드시 `prisma.$transaction(async (tx) => { ... })`으로 묶을 것
-- 트랜잭션 내부에서는 `this.prisma` 대신 `tx`를 사용
+- **DB에 직접 접근하는 함수는 모두 Repository에** — Service에서 `this.prisma.*`를 직접 호출하지 않는다
+- Repository 메서드는 트랜잭션 참여가 필요한 경우 첫 번째 인자로 `tx: Prisma.TransactionClient`를 받는다
+- 트랜잭션 경계(`prisma.$transaction(...)`)는 Service가 소유한다 — 무엇을 묶을지는 비즈니스 로직의 판단
+- `tx`를 받은 Repository 메서드는 내부에서 `this.prisma` 대신 `tx`를 사용한다
+
+```typescript
+// Repository
+async saveMemory(tx: Prisma.TransactionClient, userId: string, args: SaveArgs) {
+  await tx.memory.create({ ... });
+}
+
+// Service — 트랜잭션 경계 소유
+await this.prisma.$transaction(async (tx) => {
+  await this.memoryRepo.saveMemory(tx, userId, args);
+  await this.memoryRepo.updateStats(tx, userId, ...);
+});
+```
 
 ### 테이블 컬럼 선언 순서
 

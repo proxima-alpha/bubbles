@@ -1,0 +1,354 @@
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+
+export interface BatchMemoryResult {
+  id: string;
+  is_pinned: boolean;
+  score: number;
+  sensitivity: number;
+}
+
+export interface LlmMemoryAnalysis {
+  keywords: { code: string; name: string }[];
+  contents: string[];
+  association: string[][];
+  summary: string;
+  importance: number;
+  durability: number;
+  reusefulness: number;
+  sensitivity: number;
+  explicit_signal: number;
+  llm_confidence_hint: number;
+  temporary_penalty: number;
+}
+
+export interface MessageForBatch {
+  id: string;
+  role: string;
+  provider: string | null;
+  content: string;
+  embedding: number[];
+}
+
+export interface SaveArgs {
+  messages: MessageForBatch[];
+  memCentroid: number[];
+  analysis: LlmMemoryAnalysis;
+  existingMemory: { id: string; version: number; root_memory_id: string | null } | null;
+}
+
+function clamp(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+@Injectable()
+export class MemoryRepository {
+  constructor(
+    private prisma: PrismaService,
+    private config: ConfigService,
+  ) {}
+
+  async findUnprocessedMessages(userId: string): Promise<MessageForBatch[]> {
+    return this.prisma.$queryRaw<MessageForBatch[]>`
+      SELECT id, role, provider, content, embedding::float4[] AS embedding
+      FROM message
+      WHERE user_id = ${userId}::uuid
+        AND is_proceeded = false
+        AND embedding IS NOT NULL
+      ORDER BY created_at ASC
+    `;
+  }
+
+  async findUsersOverThreshold(threshold: number): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<{ user_id: string }[]>`
+      SELECT user_id FROM message
+      WHERE is_proceeded = false AND embedding IS NOT NULL
+      GROUP BY user_id
+      HAVING COUNT(*) >= ${threshold}
+    `;
+    return rows.map(r => r.user_id);
+  }
+
+  async findUsersOverInterval(intervalHours: number): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<{ user_id: string }[]>`
+      SELECT u.id AS user_id FROM "user" u
+      LEFT JOIN schedule s ON s.user_id = u.id AND s.type = 'memory_batch'
+      WHERE (s.id IS NULL OR s.updated_at < NOW() - (${intervalHours} || ' hours')::interval)
+        AND EXISTS (
+          SELECT 1 FROM message m
+          WHERE m.user_id = u.id AND m.is_proceeded = false AND m.embedding IS NOT NULL
+        )
+    `;
+    return rows.map(r => r.user_id);
+  }
+
+  async findSimilarMemory(
+    userId: string,
+    vec: number[],
+    threshold: number,
+  ): Promise<{ id: string; content: string | null; version: number; root_memory_id: string | null } | null> {
+    const rows = await this.prisma.$queryRaw<
+      { id: string; content: string | null; version: number; root_memory_id: string | null; similarity: number }[]
+    >`
+      SELECT id, content, version, root_memory_id,
+             (1 - (embedding <=> ${`[${vec.join(',')}]`}::vector)) AS similarity
+      FROM memory
+      WHERE user_id = ${userId}::uuid
+        AND type = 'knowledge'
+        AND is_active = true
+        AND embedding IS NOT NULL
+      ORDER BY embedding <=> ${`[${vec.join(',')}]`}::vector
+      LIMIT 1
+    `;
+
+    if (rows.length === 0 || rows[0].similarity < threshold) return null;
+    return rows[0];
+  }
+
+  async saveMemory(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    { messages, memCentroid, analysis, existingMemory }: SaveArgs,
+  ): Promise<BatchMemoryResult> {
+    const maxClusterSize = this.config.get<number>('MAX_CLUSTER_SIZE', 50);
+    const clusterSizeScore = Math.min(1, Math.log(1 + messages.length) / Math.log(1 + maxClusterSize));
+    const importance = clamp(clamp(analysis.importance) + 0.15 * clusterSizeScore);
+
+    const confirmedScore = clamp(
+      0.4 * clamp(analysis.explicit_signal) +
+      0.3 * 0 +
+      0.2 * 0 +
+      0.1 * clamp(analysis.llm_confidence_hint),
+    );
+
+    const recency = Math.exp(-0 / this.config.get<number>('RECENCY_DECAY_FACTOR', 30));
+
+    const score = clamp(
+      0.25 * importance +
+      0.25 * clamp(analysis.durability) +
+      0.20 * clamp(analysis.reusefulness) +
+      0.20 * confirmedScore +
+      0.10 * recency -
+      0.30 * clamp(analysis.sensitivity) -
+      0.30 * clamp(analysis.temporary_penalty),
+    );
+
+    const validPairs = (analysis.contents ?? [])
+      .map((sentence, i) => {
+        const raw = (analysis.association ?? [])[i];
+        const messageIds = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
+        return { sentence, messageIds };
+      })
+      .filter(p => p.messageIds.length > 0);
+
+    const now = new Date();
+
+    if (existingMemory) {
+      await tx.memory.update({
+        where: { id: existingMemory.id },
+        data: { is_active: false, deactivated_at: now },
+      });
+    }
+
+    const newMemory = await tx.memory.create({
+      data: {
+        user_id: userId,
+        type: 'knowledge',
+        history_type: existingMemory ? 'renewed' : 'created',
+        version: existingMemory ? existingMemory.version + 1 : 1,
+        parent_memory_id: existingMemory?.id ?? null,
+        root_memory_id: existingMemory ? (existingMemory.root_memory_id ?? existingMemory.id) : null,
+        score,
+        scored_at: now,
+        sensitivity: clamp(analysis.sensitivity),
+        importance,
+        durability: clamp(analysis.durability),
+        reusefulness: clamp(analysis.reusefulness),
+        explicit_signal: clamp(analysis.explicit_signal),
+        llm_confidence_hint: clamp(analysis.llm_confidence_hint),
+        confirmed_score: confirmedScore,
+        temporary_penalty: clamp(analysis.temporary_penalty),
+        summary: analysis.summary,
+        content: validPairs.map(p => p.sentence).join('\n'),
+      },
+    });
+
+    await tx.$executeRaw`
+      UPDATE memory SET embedding = ${`[${memCentroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
+    `;
+
+    for (const { sentence, messageIds } of validPairs) {
+      const mc = await tx.memory_content.create({
+        data: { memory_id: newMemory.id, content: sentence },
+      });
+      await tx.memory_content__message.createMany({
+        data: messageIds.map(mid => ({ memory_content_id: mc.id, message_id: mid })),
+      });
+    }
+
+    for (const kw of (analysis.keywords ?? []).filter(k => k.code && /^[a-z0-9-]+$/.test(k.code))) {
+      await tx.$executeRaw`
+        INSERT INTO keyword (code, name) VALUES (${kw.code}, ${kw.name})
+        ON CONFLICT (code) DO NOTHING
+      `;
+      await tx.$executeRaw`
+        INSERT INTO memory__keyword (memory_id, keyword_code)
+        VALUES (${newMemory.id}::uuid, ${kw.code})
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
+    await tx.message.updateMany({
+      where: { id: { in: messages.map(m => m.id) } },
+      data: { is_proceeded: true },
+    });
+
+    return { id: newMemory.id, is_pinned: newMemory.is_pinned, score, sensitivity: clamp(analysis.sensitivity) };
+  }
+
+  async updateRepetitionStrength(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    processedMessages: { id: string; embedding: number[] }[],
+    batchIds: string[],
+  ) {
+    const similarityThreshold = this.config.get<number>('REPETITION_SIMILARITY_THRESHOLD', 0.6);
+
+    const existingMemories = await tx.$queryRaw<{ id: string; embedding: number[] }[]>`
+      SELECT id, embedding::float4[] AS embedding
+      FROM memory
+      WHERE user_id = ${userId}::uuid
+        AND type = 'knowledge'
+        AND is_active = true
+        AND embedding IS NOT NULL
+        AND id <> ALL(${batchIds}::uuid[])
+    `;
+
+    for (const memory of existingMemories) {
+      let maxSim = 0;
+      for (const msg of processedMessages) {
+        const sim = cosineSimilarity(msg.embedding, memory.embedding);
+        if (sim > maxSim) maxSim = sim;
+      }
+      if (maxSim >= similarityThreshold) {
+        await tx.$executeRaw`
+          UPDATE memory
+          SET repetition_strength = GREATEST(0, LEAST(1, repetition_strength + ${0.005 * maxSim}))
+          WHERE id = ${memory.id}::uuid
+        `;
+      }
+    }
+  }
+
+  async findPromotedMemories(userId: string, scoreThreshold: number, sensitivityThreshold: number) {
+    return this.prisma.memory.findMany({
+      where: {
+        user_id: userId,
+        type: 'knowledge',
+        is_active: true,
+        OR: [
+          { is_pinned: true },
+          { AND: [{ score: { gt: scoreThreshold } }, { sensitivity: { lte: sensitivityThreshold } }] },
+        ],
+      },
+      select: { summary: true },
+    });
+  }
+
+  async findMainMemory(userId: string) {
+    return this.prisma.memory.findFirst({
+      where: { user_id: userId, type: 'main', is_active: true },
+      select: { id: true, version: true, summary: true },
+    });
+  }
+
+  async getActiveMainMemory(userId: string): Promise<string | null> {
+    const row = await this.prisma.memory.findFirst({
+      where: { user_id: userId, type: 'main', is_active: true },
+      select: { summary: true },
+    });
+    return row?.summary ?? null;
+  }
+
+  async getTopKnowledge(userId: string, embedding: number[], topK: number): Promise<{ id: string; summary: string }[]> {
+    const rows = await this.prisma.$queryRaw<{ id: string; summary: string }[]>`
+      SELECT id, summary
+      FROM memory
+      WHERE user_id = ${userId}::uuid
+        AND type = 'knowledge'
+        AND is_active = true
+        AND embedding IS NOT NULL
+        AND summary IS NOT NULL
+      ORDER BY embedding <=> ${`[${embedding.join(',')}]`}::vector
+      LIMIT ${topK}
+    `;
+
+    if (rows.length > 0) {
+      const ids = rows.map(r => r.id);
+      await this.prisma.$executeRaw`
+        UPDATE memory
+        SET last_referenced_at = NOW(),
+            reference_count = reference_count + 1
+        WHERE id = ANY(${ids}::uuid[])
+      `;
+    }
+
+    return rows;
+  }
+
+  async getKnowledgeList(userId: string) {
+    return this.prisma.memory.findMany({
+      where: { user_id: userId, type: 'knowledge', is_active: true },
+      orderBy: { created_at: 'desc' },
+      include: {
+        keywords: { include: { keyword: true } },
+      },
+    });
+  }
+
+  async applyDecay() {
+    await this.prisma.$executeRaw`
+      UPDATE memory
+      SET repetition_strength = GREATEST(0, LEAST(1, repetition_strength * 0.995))
+      WHERE type = 'knowledge' AND is_active = true
+    `;
+  }
+
+  async saveMainMemory(
+    userId: string,
+    summary: string,
+    existing: { id: string; version: number } | null,
+  ) {
+    const now = new Date();
+    if (existing) {
+      await this.prisma.memory.update({
+        where: { id: existing.id },
+        data: { is_active: false, deactivated_at: now },
+      });
+    }
+    await this.prisma.memory.create({
+      data: {
+        user_id: userId,
+        type: 'main',
+        history_type: 'renewed',
+        version: existing ? existing.version + 1 : 1,
+        parent_memory_id: existing?.id ?? null,
+        root_memory_id: null,
+        summary,
+      },
+    });
+  }
+}

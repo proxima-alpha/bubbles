@@ -1,13 +1,12 @@
 /**
  * 수동 실행용 테스트 — 실제 DB/LLM에 연결해서 runBatch를 직접 실행한다.
  * target_ids에 테스트할 user_id를 넣고 아래 명령으로 실행:
- *   npx dotenv -e .env -- jest scheduler.manual --testTimeout=120000 --runInBand
+ *   npx dotenv -e .env -- jest scheduler.manual --runInBand
  */
 import { Test } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import { SchedulerService } from './scheduler.service';
-import { PrismaService } from '../prisma/prisma.service';
-import { ModelService } from '../model/model.service';
+import { MemoryRepository } from './memory.repository';
 import { ModelModule } from '../model/model.module';
 import { PrismaModule } from '../prisma/prisma.module';
 
@@ -23,7 +22,7 @@ describe('SchedulerService (manual)', () => {
         PrismaModule,
         ModelModule,
       ],
-      providers: [SchedulerService],
+      providers: [MemoryRepository, SchedulerService],
     }).compile();
 
     service = module.get(SchedulerService);
@@ -40,5 +39,6 @@ describe('SchedulerService (manual)', () => {
       console.log(`[${userId}] processed ${results.length} memories`, results);
       await service.updateMainMemory(userId, results);
     },
+    120000,
   );
 });

@@ -1,21 +1,18 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../prisma/prisma.service';
+import { UserRepository } from '../user/user.repository';
 import { OllamaProvider, LlmMessage } from './providers/ollama.provider';
 
 @Injectable()
 export class ModelService {
   constructor(
-    private prisma: PrismaService,
+    private userRepo: UserRepository,
     private config: ConfigService,
     private ollamaProvider: OllamaProvider,
   ) {}
 
   async getModelInfo(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { model_code: { include: { parent: true } } },
-    });
+    const user = await this.userRepo.findByIdWithModel(userId);
     if (!user?.model) throw new ForbiddenException('No model selected');
     const baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
     const modelCode = user.model_code ? { code: user.model_code.code, name: user.model_code.name } : null;
