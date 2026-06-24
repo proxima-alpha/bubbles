@@ -13,7 +13,7 @@ export interface BatchMemoryResult {
 export interface LlmMemoryAnalysis {
   keywords: { code: string; name: string }[];
   contents: string[];
-  association: string[][];
+  associations: string[][];
   summary: string;
   importance: number;
   durability: number;
@@ -186,7 +186,7 @@ export class MemoryRepository {
 
     const validPairs = (analysis.contents ?? [])
       .map((sentence, i) => {
-        const raw = (analysis.association ?? [])[i];
+        const raw = (analysis.associations ?? [])[i];
         const messageIds = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
         return { sentence, messageIds };
       })

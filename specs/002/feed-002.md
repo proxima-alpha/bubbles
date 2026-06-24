@@ -37,17 +37,17 @@ assistant 메시지가 어떤 user 질문에 대한 응답인지 DB 레벨에서
 ```
 
 - key가 `"user"`이면 이용자 질문, 그 외는 AI 제공자명
-- user 메시지는 LLM 컨텍스트용으로만 포함 — `association` 출력에서 user message_id 제외
-- merge 케이스: 기존 `memory.content` 문장들을 앞에 추가 (`message_id` 없음), 새 messages만 association 대상
+- user 메시지는 LLM 컨텍스트용으로만 포함 — `associations` 출력에서 user message_id 제외
+- merge 케이스: 기존 `memory.content` 문장들을 앞에 추가 (`message_id` 없음), 새 messages만 associations 대상
 
 ### 5. LLM 출력 포맷 변경
 
-`contents: [{order, text}]` → `contents: string[]` + `association: string[][]`
+`contents: [{order, text}]` → `contents: string[]` + `associations: string[][]`
 
 ```json
 {
   "contents": ["문장1", "문장2"],
-  "association": [
+  "associations": [
     ["uuid-b"],
     ["uuid-b"]
   ],
@@ -55,9 +55,9 @@ assistant 메시지가 어떤 user 질문에 대한 응답인지 DB 레벨에서
 }
 ```
 
-- `contents[i]`와 `association[i]`는 같은 index로 대응
-- `association[i]`가 비어있거나 없는 `contents[i]`는 저장하지 않음
-- `association[i]`의 message_id → `memory_content__message` 생성
+- `contents[i]`와 `associations[i]`는 같은 index로 대응
+- `associations[i]`가 비어있거나 없는 `contents[i]`는 저장하지 않음
+- `associations[i]`의 message_id → `memory_content__message` 생성
 
 ---
 
@@ -65,5 +65,5 @@ assistant 메시지가 어떤 user 질문에 대한 응답인지 DB 레벨에서
 
 - [x] DB 마이그레이션: `message.parent_message_id` 추가, `memory_content.order` 제거
 - [x] `chat.service.ts`: assistant 저장 시 `parent_message_id` 설정
-- [x] `scheduler.service.ts`: LLM 입력/출력 포맷 변경, association 기반 memory_content__message 생성
+- [x] `scheduler.service.ts`: LLM 입력/출력 포맷 변경, associations 기반 memory_content__message 생성
 - [x] `LlmMemoryAnalysis` 인터페이스 업데이트

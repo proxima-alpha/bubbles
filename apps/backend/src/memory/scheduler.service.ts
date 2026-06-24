@@ -141,38 +141,81 @@ export class SchedulerService {
     const inputArray = messages.map(m => ({
       [m.role === 'user' ? 'user' : (m.provider ?? 'assistant')]: {
         text: m.content,
-        message_id: m.id,
+        message_id: m.role !== 'user' ? m.id : null,
       },
     }));
 
     const contextSection = existingContent ? `[기존 메모리]\n${existingContent}\n\n` : '';
 
-    const prompt = `다음 대화 내용을 분석하여 JSON으로만 응답하세요.
+    const prompt = `다음 대화 내용을 분석하여 JSON으로 응답하세요.
+
+[지침]
+- 분석 절차:
+  1. 응답에서 장기 기억으로 남길 핵심 정보를 문어체로 추출한다 (인사·도입부 등 정보 없는 문장은 제외)
+  2-1. 추출한 핵심 정보를 문장 단위로 쪼개 각각 contents에 할당한다
+  2-2. 각 문장의 근거가 되는 message_id를 associations에 할당한다 (message_id 는 여러 contents 에 할당 가능)
+  3-1. 추출한 정보 중 keywords를 뽑는다
+
+- contents[i].text: 추출·정제된 핵심 정보 한 문장 (입력 대화 원문을 그대로 쪼개지 말 것)
+- contents[i].associations: 그 문장의 근거가 된 assistant 응답의 message_id 목록
+    · 근거를 찾을 수 없으면 그 문장은 contents에 포함하지 않는다
+- keywords: 이 대화의 핵심 주제. 대화 전체를 관통하는 중심 개념만.
+    · 부차적으로 언급된 세부 기법·예시는 키워드로 만들지 않는다
+- keywords[i].code: 영문 소문자·숫자·하이픈 (예: rag-technique)
+- keywords[i].name: 키워드명, 한글 선호, 괄호 등 부가설명 하지않음 
+- summary: contents 전체의 짧은 요약
+- 점수(0~1): importance(사용자 이해에 중요할수록 높음), durability(시간이 지나도 유효할수록 높음), reusefulness(재활용 가능성), sensitivity(민감정보일수록 높음), explicit_signal(사용자가 확정적으로 말할수록 높음), llm_confidence_hint(분석 신뢰도), temporary_penalty(장기 기억 가치가 낮을수록 높음 — 날씨·일시적 감정 → 높음, 직업·가치관 → 낮음)
 
 ${contextSection}[대화]
-${JSON.stringify(inputArray, null, 2)}
+${JSON.stringify(inputArray, null, 2)}`;
 
-{
-  "keywords": [{"code": "영문-소문자-하이픈-슬러그", "name": "표시할 한국어명"}],
-  "contents": ["기억할 문장1", "기억할 문장2"],
-  "association": [["assistant-message-id"], ["assistant-message-id-1", "assistant-message-id-2"]],
-  "summary": "한 문장 요약",
-  "importance": 0.0,
-  "durability": 0.0,
-  "reusefulness": 0.0,
-  "sensitivity": 0.0,
-  "explicit_signal": 0.0,
-  "llm_confidence_hint": 0.0,
-  "temporary_penalty": 0.0
-}
-
-// contents: 대화에서 기억할 문장 배열
-// association: contents와 같은 길이. association[i]는 contents[i]의 근거 message_id 목록
-// association에는 assistant message_id만 포함 (user 메시지 제외)
-// association[i]가 비어있는 contents[i]는 반환하지 말 것
-// temporary_penalty: 장기 기억 가치가 낮을수록 높게 (오늘 날씨 → 높음, 직업/가치관 → 낮음)`;
-
-    const fullContent = await this.modelService.chat(userId, [{ role: 'user', content: prompt }], { num_predict: 1024 });
+    const schema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        keywords: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              code: {type: 'string'},
+              name: {type: 'string'},
+            },
+            required: ['code', 'name'],
+          },
+        },
+        contents: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              text: {type: 'string'},
+              associations: {
+                type: 'array',
+                items: {type: 'string'},
+              },
+            },
+            required: ['code', 'name'],
+          },
+        },
+        summary: {type: 'string'},
+        importance: {type: 'number'},
+        durability: {type: 'number'},
+        reusefulness: {type: 'number'},
+        sensitivity: {type: 'number'},
+        explicit_signal: {type: 'number'},
+        llm_confidence_hint: {type: 'number'},
+        temporary_penalty: {type: 'number'},
+      },
+      required: [
+        'keywords', 'contents', 'associations', 'summary',
+        'importance', 'durability', 'reusefulness', 'sensitivity',
+        'explicit_signal', 'llm_confidence_hint', 'temporary_penalty',
+      ]
+    };
+    const fullContent = await this.modelService.chat(userId, [{ role: 'user', content: prompt }], { num_predict: 1024 }, schema);
 
     const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');

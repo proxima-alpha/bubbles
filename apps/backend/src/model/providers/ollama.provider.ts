@@ -29,11 +29,12 @@ export class OllamaProvider {
     model: string,
     messages: LlmMessage[],
     options?: { num_predict?: number },
+    format?: 'json' | Record<string, unknown>,
   ): Promise<string> {
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: false, think: false, enable_thinking: false, ...(options && { options }) }),
+      body: JSON.stringify({ model, messages, stream: false, think: false, enable_thinking: false, ...(format && { format }), ...(options && { options }) }),
     });
     if (!res.ok) throw new InternalServerErrorException(`Ollama error: ${res.status}`);
     const data = await res.json();

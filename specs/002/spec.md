@@ -557,7 +557,7 @@ clustering 서버 호출 없이 exchange 단위로 각각 처리:
 ```
 
 merge 케이스: 기존 `memory.content` 문장들을 먼저 배열에 포함 (`message_id` 없음 — 이미 처리된 기존 내용).
-association 대상은 새 messages만.
+associations 대상은 새 messages만.
 
 ### LLM 프롬프트 (키워드 + 점수 산정)
 
@@ -569,7 +569,7 @@ association 대상은 새 messages만.
 {
   "keywords": [{"code": "영문-소문자-하이픈-슬러그", "name": "표시할 한국어명"}],
   "contents": ["문장1", "문장2", "문장3"],
-  "association": [
+  "associations": [
     ["uuid-a", "uuid-b"],
     ["uuid-b"]
   ],
@@ -584,16 +584,16 @@ association 대상은 새 messages만.
 }
 
 // contents: memory_content 문장 배열
-// association: contents와 같은 길이의 배열. association[i] = contents[i]의 근거 message_id 목록
+// associations: contents와 같은 길이의 배열. association[i] = contents[i]의 근거 message_id 목록
 // temporary_penalty: 이 정보가 장기 기억으로 남길 가치가 낮을수록 높게 부여
 // (예: 오늘 날씨, 일시적 감정 → 높음 / 직업, 가치관 → 낮음)
 ```
 
-`association` 처리:
-- `contents[i]`와 `association[i]`는 같은 index로 대응
-- user 메시지는 LLM 입력 컨텍스트용으로만 포함 — `association`에서 user message_id는 제외
-- `association[i]`가 비어있거나 없는 `contents[i]`는 저장하지 않음 (근거 없는 문장 금지)
-- `association[i]`의 message_id → `memory_content__message` 생성
+`associations` 처리:
+- `contents[i]`와 `associations[i]`는 같은 index로 대응
+- user 메시지는 LLM 입력 컨텍스트용으로만 포함 — `associations`에서 user message_id는 제외
+- `associations[i]`가 비어있거나 없는 `contents[i]`는 저장하지 않음 (근거 없는 문장 금지)
+- `associations[i]`의 message_id → `memory_content__message` 생성
 
 ---
 

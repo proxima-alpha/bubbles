@@ -20,9 +20,9 @@ export class ModelService {
     return { model: user.model, baseUrl, provider: providerCode?.code ?? 'unknown', modelCode, providerCode };
   }
 
-  async chat(userId: string, messages: LlmMessage[], options?: { num_predict?: number }): Promise<string> {
+  async chat(userId: string, messages: LlmMessage[], options?: { num_predict?: number }, format?: 'json' | Record<string, unknown>): Promise<string> {
     const { model, baseUrl } = await this.getModelInfo(userId);
-    return this.ollamaProvider.chat(baseUrl, model, messages, options);
+    return this.ollamaProvider.chat(baseUrl, model, messages, options, format);
   }
 
   async *chatStream(
