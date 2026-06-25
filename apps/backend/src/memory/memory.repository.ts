@@ -13,7 +13,7 @@ export interface BatchMemoryResult {
 export interface LlmMemoryAnalysis {
   keywords: { code: string; name: string }[];
   contents: string[];
-  associations: string[][];
+  associations?: string[][];
   summary: string;
   importance: number;
   durability: number;
@@ -29,6 +29,7 @@ export interface MessageForBatch {
   role: string;
   provider: string | null;
   content: string;
+  terms: string[];
   embedding: number[];
 }
 
@@ -76,7 +77,7 @@ export class MemoryRepository {
 
   async findUnprocessedExchanges(userId: string): Promise<Exchange[]> {
     const rows = await this.prisma.$queryRaw<(MessageForBatch & { parent_message_id: string | null })[]>`
-      SELECT id, role, provider, content, embedding::float4[] AS embedding, parent_message_id
+      SELECT id, role, provider, content, terms, embedding::float4[] AS embedding, parent_message_id
       FROM message
       WHERE user_id = ${userId}::uuid
         AND is_proceeded = false

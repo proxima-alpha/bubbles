@@ -19,6 +19,14 @@ function centroid(vectors: number[][]): number[] {
   return sum.map(x => x / vectors.length);
 }
 
+function jaccardSimilarity(a: string[], b: string[]): number {
+  if (a.length === 0 && b.length === 0) return 0;
+  const setA = new Set(a);
+  const intersection = b.filter(t => setA.has(t)).length;
+  const union = new Set([...a, ...b]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) {
@@ -77,7 +85,8 @@ export class SchedulerService {
         groups.push(await this.prepareGroup(userId, [exchange]));
       }
     } else {
-      const vectors = exchanges.map(e => e.embedding);
+      const exchangeTexts = exchanges.map(e => e.messages.map(m => m.content).join('\n'));
+      const vectors = await this.modelService.embedTextsChunked(exchangeTexts, 'clustering: ');
       const ids = exchanges.map(e => e.id);
 
       const clusterResult = await this.runClustering(vectors, ids);
@@ -98,7 +107,10 @@ export class SchedulerService {
     const pendingSaves: SaveArgs[] = [];
     for (const group of groups) {
       const analysis = await this.callLlmForAnalysis(userId, group.messages, group.existingMemory?.content);
-      pendingSaves.push({ ...group, analysis });
+      if(analysis.contents.length > 0) {
+        const associations = await this.runAssociationMapping(analysis.contents, group.messages);
+        pendingSaves.push({...group, analysis: {...analysis, associations}});
+      }
     }
 
     const allMessages = exchanges.flatMap(e => e.messages);
@@ -147,18 +159,19 @@ export class SchedulerService {
 
     const contextSection = existingContent ? `[기존 메모리]\n${existingContent}\n\n` : '';
 
-    const prompt = `다음 대화 내용을 분석하여 JSON으로 응답하세요.
-
+    const prompt = `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
+-주요 언어를 바꾸지 않는다
 - 분석 절차:
-  1. 응답에서 장기 기억으로 남길 핵심 정보를 문어체로 추출한다 (인사·도입부 등 정보 없는 문장은 제외)
+  1. 응답에서 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출한다
+    · 기억할 가치가 있는 정보가 없으면 contents와 keywords 빈 배열([])로 둔다.
+    . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
+    . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
+    . 한국어 표현이 없는 단어는 영어를 사용한다.
   2-1. 추출한 핵심 정보를 문장 단위로 쪼개 각각 contents에 할당한다
-  2-2. 각 문장의 근거가 되는 message_id를 associations에 할당한다 (message_id 는 여러 contents 에 할당 가능)
   3-1. 추출한 정보 중 keywords를 뽑는다
 
-- contents[i].text: 추출·정제된 핵심 정보 한 문장 (입력 대화 원문을 그대로 쪼개지 말 것)
-- contents[i].associations: 그 문장의 근거가 된 assistant 응답의 message_id 목록
-    · 근거를 찾을 수 없으면 그 문장은 contents에 포함하지 않는다
+- contents[i]: 추출·정제된 핵심 정보 한 문장
 - keywords: 이 대화의 핵심 주제. 대화 전체를 관통하는 중심 개념만.
     · 부차적으로 언급된 세부 기법·예시는 키워드로 만들지 않는다
 - keywords[i].code: 영문 소문자·숫자·하이픈 (예: rag-technique)
@@ -166,8 +179,8 @@ export class SchedulerService {
 - summary: contents 전체의 짧은 요약
 - 점수(0~1): importance(사용자 이해에 중요할수록 높음), durability(시간이 지나도 유효할수록 높음), reusefulness(재활용 가능성), sensitivity(민감정보일수록 높음), explicit_signal(사용자가 확정적으로 말할수록 높음), llm_confidence_hint(분석 신뢰도), temporary_penalty(장기 기억 가치가 낮을수록 높음 — 날씨·일시적 감정 → 높음, 직업·가치관 → 낮음)
 
-${contextSection}[대화]
-${JSON.stringify(inputArray, null, 2)}`;
+${contextSection}
+[대화]\n${JSON.stringify(inputArray, null, 2)}`;
 
     const schema = {
       type: 'object',
@@ -188,16 +201,7 @@ ${JSON.stringify(inputArray, null, 2)}`;
         contents: {
           type: 'array',
           items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              text: {type: 'string'},
-              associations: {
-                type: 'array',
-                items: {type: 'string'},
-              },
-            },
-            required: ['code', 'name'],
+            type: 'string',
           },
         },
         summary: {type: 'string'},
@@ -210,7 +214,7 @@ ${JSON.stringify(inputArray, null, 2)}`;
         temporary_penalty: {type: 'number'},
       },
       required: [
-        'keywords', 'contents', 'associations', 'summary',
+        'keywords', 'contents', 'summary',
         'importance', 'durability', 'reusefulness', 'sensitivity',
         'explicit_signal', 'llm_confidence_hint', 'temporary_penalty',
       ]
@@ -220,6 +224,26 @@ ${JSON.stringify(inputArray, null, 2)}`;
     const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
     return JSON.parse(jsonMatch[0]) as LlmMemoryAnalysis;
+  }
+
+  private async runAssociationMapping(contents: string[], messages: MessageForBatch[]): Promise<string[][]> {
+    const assistantMessages = messages.filter(m => m.role !== 'user');
+    if (assistantMessages.length === 0) return contents.map(() => []);
+
+    const MIN_SCORE = 0.75;
+
+    const contentEmbeddings = await this.modelService.embedTextsChunked(contents, 'search_query: ');
+
+    return contentEmbeddings.map((embedding, i) => {
+      console.log(`[association] content[${i}]:`, contents[i]);
+      return assistantMessages
+        .filter(m => {
+          const cosine = cosineSimilarity(embedding, m.embedding);
+          console.log(`  msg ${m.id} | cosine: ${cosine.toFixed(3)}`);
+          return cosine >= MIN_SCORE;
+        })
+        .map(m => m.id);
+    });
   }
 
   private async runClustering(vectors: number[][], ids: string[]) {

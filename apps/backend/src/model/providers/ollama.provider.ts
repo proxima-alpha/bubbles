@@ -24,6 +24,17 @@ export class OllamaProvider {
     return data.embedding as number[];
   }
 
+  async embedBatch(baseUrl: string, texts: string[]): Promise<number[][]> {
+    const res = await fetch(`${baseUrl}/api/embed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'nomic-embed-text', input: texts }),
+    });
+    if (!res.ok) throw new Error(`Ollama embed error: ${res.status}`);
+    const data = await res.json();
+    return data.embeddings as number[][];
+  }
+
   async chat(
     baseUrl: string,
     model: string,

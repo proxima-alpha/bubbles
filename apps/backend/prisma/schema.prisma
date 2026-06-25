@@ -90,6 +90,8 @@ model message {
   model_category    String                     @default("model") @db.VarChar
   model             String?                    @db.VarChar
   content           String                     @db.Text
+  summary           String?                    @db.Text
+  terms             String[]
   input_tokens      Int?
   output_tokens     Int?
   parent_message_id String?                    @db.Uuid

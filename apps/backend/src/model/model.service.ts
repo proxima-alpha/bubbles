@@ -46,9 +46,38 @@ export class ModelService {
     throw new Error('unreachable');
   }
 
-  async embedTextChunked(text: string): Promise<number[]> {
+  async embedTexts(texts: string[], prefix?: string): Promise<number[][]> {
+    const baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
+    const prefixed = prefix ? texts.map(t => `${prefix}${t}`) : texts;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        return await this.ollamaProvider.embedBatch(baseUrl, prefixed);
+      } catch (e) {
+        if (attempt === 3) throw e;
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+    throw new Error('unreachable');
+  }
+
+  async embedTextChunked(text: string, prefix?: string): Promise<number[]> {
     const chunks = this.chunkText(text);
-    const vectors = await Promise.all(chunks.map(c => this.embedText(c)));
+    const vectors = await this.embedTexts(chunks, prefix);
+    return this.averageVectors(vectors);
+  }
+
+  async embedTextsChunked(texts: string[], prefix?: string): Promise<number[][]> {
+    const chunkGroups = texts.map(t => this.chunkText(t));
+    const allVectors = await this.embedTexts(chunkGroups.flat(), prefix);
+    let offset = 0;
+    return chunkGroups.map(chunks => {
+      const vectors = allVectors.slice(offset, offset + chunks.length);
+      offset += chunks.length;
+      return this.averageVectors(vectors);
+    });
+  }
+
+  private averageVectors(vectors: number[][]): number[] {
     if (vectors.length === 1) return vectors[0];
     const dim = vectors[0].length;
     const sum = new Array<number>(dim).fill(0);

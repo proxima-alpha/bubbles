@@ -30,8 +30,7 @@ export class ChatService {
 
     let queryEmbedding: number[];
     try {
-      queryEmbedding = await this.modelService.embedTextChunked(dto.content);
-      await this.chatRepo.setMessageEmbedding(userMsg.id, queryEmbedding);
+      queryEmbedding = await this.modelService.embedTextChunked(dto.content, 'search_query: ');
     } catch (e) {
       res.status(503).json({ message: '잠시 후 재시도해주세요.' });
       return;
@@ -88,9 +87,30 @@ export class ChatService {
       parent_message_id: userMsg.id,
     });
 
-    void this.modelService.embedTextChunked(fullContent)
-      .then(vec => this.chatRepo.setMessageEmbedding(assistantMsg.id, vec))
-      .catch(e => console.error('assistant embed failed', e));
+    void this.modelService.chat(userId, [
+      { role: 'user', content: `[질문]과 [응답]을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
+[지침]
+-주요 언어를 바꾸지 않는다
+-summary: 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출한다
+    · 전체 글자 수는 200개 이하
+    . 수식하는 문구 추가하지 않음.
+    . 같은 개념의 단어가 한국어로 표기된 경우 한국어를 사용한다.
+    . 한국어 표현이 없는 단어는 영어를 사용한다.
+
+[질문]\n${dto.content}\n\n[응답]\n${fullContent}` },
+    ], { num_predict: 150 }, {
+      type: 'object',
+      properties: {
+        summary: { type: 'string' },
+      },
+      required: ['summary', 'terms'],
+    })
+      .then(raw => {
+        const { summary } = JSON.parse(raw) as { summary: string; terms: string[] };
+        return this.modelService.embedTextChunked(summary, 'search_document: ')
+          .then(vec => this.chatRepo.updateMessageSummaryAndEmbedding(assistantMsg.id, summary, vec));
+      })
+      .catch(e => console.error('summary/embed failed', e));
 
     res.write(`data: [DONE]\n\n`);
     res.end();
