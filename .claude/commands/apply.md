@@ -27,3 +27,4 @@
 - 워크플로우 4단계(코드 작성)에 해당 — 유저의 명시적 호출 없이 단독 실행 금지
 - 코드 작성 시작 전 대상 spec의 태스크 목록으로 TaskCreate 생성, 각 완료 시 TaskUpdate로 completed 처리
 - 다중 태스크 실행 시 태스크별로 커밋. 커밋 메시지 형식: `<Keyword>: spec-NNN (N) <설명>`
+- **push는 하지 않는다** — push는 `/confirm` 호출 시에만
