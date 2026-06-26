@@ -31,6 +31,7 @@ export interface MessageForBatch {
   content: string;
   terms: string[];
   embedding: number[];
+  summary: string;
 }
 
 export interface Exchange {
@@ -77,7 +78,7 @@ export class MemoryRepository {
 
   async findUnprocessedExchanges(userId: string): Promise<Exchange[]> {
     const rows = await this.prisma.$queryRaw<(MessageForBatch & { parent_message_id: string | null })[]>`
-      SELECT id, role, provider, content, terms, embedding::float4[] AS embedding, parent_message_id
+      SELECT id, role, provider, content, terms, summary, embedding::float4[] AS embedding, parent_message_id
       FROM message
       WHERE user_id = ${userId}::uuid
         AND is_proceeded = false

@@ -1,9 +1,16 @@
-import { Injectable } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../prisma/prisma.service';
-import { ModelService } from '../model/model.service';
-import { MemoryRepository, BatchMemoryResult, LlmMemoryAnalysis, MessageForBatch, Exchange, SaveArgs } from './memory.repository';
+import {Injectable} from '@nestjs/common';
+import {Cron} from '@nestjs/schedule';
+import {ConfigService} from '@nestjs/config';
+import {PrismaService} from '../prisma/prisma.service';
+import {ModelService} from '../model/model.service';
+import {
+  BatchMemoryResult,
+  Exchange,
+  LlmMemoryAnalysis,
+  MemoryRepository,
+  MessageForBatch,
+  SaveArgs
+} from './memory.repository';
 
 interface GroupArgs {
   messages: MessageForBatch[];
@@ -45,7 +52,8 @@ export class SchedulerService {
     private config: ConfigService,
     private modelService: ModelService,
     private memoryRepo: MemoryRepository,
-  ) {}
+  ) {
+  }
 
   @Cron('* * * * *')
   async checkAndRun() {
@@ -107,7 +115,7 @@ export class SchedulerService {
     const pendingSaves: SaveArgs[] = [];
     for (const group of groups) {
       const analysis = await this.callLlmForAnalysis(userId, group.messages, group.existingMemory?.content);
-      if(analysis.contents.length > 0) {
+      if (analysis.contents.length > 0) {
         const associations = await this.runAssociationMapping(analysis.contents, group.messages);
         pendingSaves.push({...group, analysis: {...analysis, associations}});
       }
@@ -219,30 +227,108 @@ ${contextSection}
         'explicit_signal', 'llm_confidence_hint', 'temporary_penalty',
       ]
     };
-    const fullContent = await this.modelService.chat(userId, [{ role: 'user', content: prompt }], { num_predict: 1024 }, schema);
+    const fullContent = await this.modelService.chat(userId, [{
+      role: 'user',
+      content: prompt
+    }], {num_predict: 1024}, schema);
 
     const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
     return JSON.parse(jsonMatch[0]) as LlmMemoryAnalysis;
   }
-
-  private async runAssociationMapping(contents: string[], messages: MessageForBatch[]): Promise<string[][]> {
+  private async runAssociationMapping(
+    contents: string[],
+    messages: MessageForBatch[],
+  ): Promise<string[][]> {
     const assistantMessages = messages.filter(m => m.role !== 'user');
     if (assistantMessages.length === 0) return contents.map(() => []);
 
     const MIN_SCORE = 0.75;
 
-    const contentEmbeddings = await this.modelService.embedTextsChunked(contents, 'search_query: ');
+    const contentEmbeddings = await this.modelService.embedTextsChunked(
+      contents,
+      'search_query: ',
+    );
 
-    return contentEmbeddings.map((embedding, i) => {
-      console.log(`[association] content[${i}]:`, contents[i]);
-      return assistantMessages
-        .filter(m => {
-          const cosine = cosineSimilarity(embedding, m.embedding);
-          console.log(`  msg ${m.id} | cosine: ${cosine.toFixed(3)}`);
-          return cosine >= MIN_SCORE;
+    const messageSummaryEntries = await Promise.all(
+      assistantMessages.map(async m => {
+        const sourceText = m.summary?.trim();
+
+        if (!sourceText) {
+          return null;
+        }
+        const summaryTexts = sourceText
+          .split(/\n+|(?=\d+\.\s)|(?<=[.!?。！？])\s+/g)
+          .map(s => s.trim())
+          .filter(Boolean);
+
+        if (summaryTexts.length === 0) {
+          return {
+            messageId: m.id,
+            summaries: [],
+          };
+        }
+
+        const summaryEmbeddings = await this.modelService.embedTextsChunked(
+          summaryTexts,
+          'search_document: ',
+        );
+
+        return {
+          messageId: m.id,
+          summaries: summaryTexts.map((text, index) => ({
+            index,
+            text,
+            embedding: summaryEmbeddings[index],
+          })),
+        };
+      }),
+    );
+
+    return contentEmbeddings.map((contentEmbedding, contentIndex) => {
+      return messageSummaryEntries.filter((entry) => !!entry)
+        .map(entry => {
+          if (entry.summaries.length === 0) {
+            console.log(
+              `[association] content[${contentIndex}] | msg ${entry.messageId} | no summaries -> skip`,
+            );
+
+            return null;
+          }
+
+          const scored = entry.summaries
+            .map(summary => ({
+              summaryIndex: summary.index,
+              summaryText: summary.text,
+              score: cosineSimilarity(contentEmbedding, summary.embedding),
+            }))
+            .sort((a, b) => b.score - a.score);
+
+          const top1 = scored[0];
+          const top2 = scored[1] ?? null;
+
+          const messageScore = top2
+            ? top1.score * 0.7 + top2.score * 0.3
+            : top1.score;
+
+          console.log(
+            `[association] content[${contentIndex}] | msg ${entry.messageId} | top1: ${top1.score.toFixed(3)}, top2: ${top2 ? top2.score.toFixed(3) : '-'}, score: ${messageScore.toFixed(3)}`,
+          );
+          console.log(`  top1 summary[${top1.summaryIndex}]: ${top1.summaryText}`);
+          if (top2) {
+            console.log(`  top2 summary[${top2.summaryIndex}]: ${top2.summaryText}`);
+          }
+
+          return {
+            id: entry.messageId,
+            score: messageScore,
+          };
         })
-        .map(m => m.id);
+        .filter((result): result is { id: string; score: number } => {
+          return result !== null && result.score >= MIN_SCORE;
+        })
+        .sort((a, b) => b.score - a.score)
+        .map(result => result.id);
     });
   }
 
@@ -252,8 +338,8 @@ ${contextSection}
     const similarityThreshold = this.config.get<number>('CLUSTERING_SIMILARITY_THRESHOLD', 0.95);
     const res = await fetch(`${url}/cluster`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vectors, ids, min_cluster_size: minClusterSize, similarity_threshold: similarityThreshold }),
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({vectors, ids, min_cluster_size: minClusterSize, similarity_threshold: similarityThreshold}),
     });
     if (!res.ok) throw new Error(`Clustering error: ${res.status}`);
     return res.json();
@@ -278,7 +364,7 @@ ${contextSection}
       : `다음은 사용자에 대해 알려진 정보입니다.\n\n[새로 추가된 지식]\n${newKnowledge}\n\n위 내용을 바탕으로 사용자를 잘 아는 AI가 기억해야 할 핵심 정보를 압축하여 작성하세요.`;
 
     let mainSummary = '';
-    for await (const token of this.modelService.chatStream(userId, [{ role: 'user', content: promptText }])) {
+    for await (const token of this.modelService.chatStream(userId, [{role: 'user', content: promptText}])) {
       mainSummary += token;
     }
 
