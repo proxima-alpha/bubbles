@@ -26,13 +26,6 @@ function centroid(vectors: number[][]): number[] {
   return sum.map(x => x / vectors.length);
 }
 
-function jaccardSimilarity(a: string[], b: string[]): number {
-  if (a.length === 0 && b.length === 0) return 0;
-  const setA = new Set(a);
-  const intersection = b.filter(t => setA.has(t)).length;
-  const union = new Set([...a, ...b]).size;
-  return union === 0 ? 0 : intersection / union;
-}
 
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0, na = 0, nb = 0;
@@ -243,93 +236,8 @@ ${contextSection}
     const assistantMessages = messages.filter(m => m.role !== 'user');
     if (assistantMessages.length === 0) return contents.map(() => []);
 
-    const MIN_SCORE = 0.75;
-
-    const contentEmbeddings = await this.modelService.embedTextsChunked(
-      contents,
-      'search_query: ',
-    );
-
-    const messageSummaryEntries = await Promise.all(
-      assistantMessages.map(async m => {
-        const sourceText = m.summary?.trim();
-
-        if (!sourceText) {
-          return null;
-        }
-        const summaryTexts = sourceText
-          .split(/\n+|(?=\d+\.\s)|(?<=[.!?。！？])\s+/g)
-          .map(s => s.trim())
-          .filter(Boolean);
-
-        if (summaryTexts.length === 0) {
-          return {
-            messageId: m.id,
-            summaries: [],
-          };
-        }
-
-        const summaryEmbeddings = await this.modelService.embedTextsChunked(
-          summaryTexts,
-          'search_document: ',
-        );
-
-        return {
-          messageId: m.id,
-          summaries: summaryTexts.map((text, index) => ({
-            index,
-            text,
-            embedding: summaryEmbeddings[index],
-          })),
-        };
-      }),
-    );
-
-    return contentEmbeddings.map((contentEmbedding, contentIndex) => {
-      return messageSummaryEntries.filter((entry) => !!entry)
-        .map(entry => {
-          if (entry.summaries.length === 0) {
-            console.log(
-              `[association] content[${contentIndex}] | msg ${entry.messageId} | no summaries -> skip`,
-            );
-
-            return null;
-          }
-
-          const scored = entry.summaries
-            .map(summary => ({
-              summaryIndex: summary.index,
-              summaryText: summary.text,
-              score: cosineSimilarity(contentEmbedding, summary.embedding),
-            }))
-            .sort((a, b) => b.score - a.score);
-
-          const top1 = scored[0];
-          const top2 = scored[1] ?? null;
-
-          const messageScore = top2
-            ? top1.score * 0.7 + top2.score * 0.3
-            : top1.score;
-
-          console.log(
-            `[association] content[${contentIndex}] | msg ${entry.messageId} | top1: ${top1.score.toFixed(3)}, top2: ${top2 ? top2.score.toFixed(3) : '-'}, score: ${messageScore.toFixed(3)}`,
-          );
-          console.log(`  top1 summary[${top1.summaryIndex}]: ${top1.summaryText}`);
-          if (top2) {
-            console.log(`  top2 summary[${top2.summaryIndex}]: ${top2.summaryText}`);
-          }
-
-          return {
-            id: entry.messageId,
-            score: messageScore,
-          };
-        })
-        .filter((result): result is { id: string; score: number } => {
-          return result !== null && result.score >= MIN_SCORE;
-        })
-        .sort((a, b) => b.score - a.score)
-        .map(result => result.id);
-    });
+    const contentEmbeddings = await this.modelService.embedTextsChunked(contents, 'search_query: ');
+    return this.memoryRepo.findAssociations(contentEmbeddings, assistantMessages.map(m => m.id));
   }
 
   private async runClustering(vectors: number[][], ids: string[]) {

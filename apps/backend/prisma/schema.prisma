@@ -90,7 +90,6 @@ model message {
   model_category    String                     @default("model") @db.VarChar
   model             String?                    @db.VarChar
   content           String                     @db.Text
-  summary           String?                    @db.Text
   terms             String[]
   input_tokens      Int?
   output_tokens     Int?
@@ -107,6 +106,20 @@ model message {
   child_messages message[]    @relation("message_parent")
 
   memory_content_messages memory_content__message[]
+  message_contents        message_content[]
+}
+
+model message_content {
+  id         String                      @id @default(uuid()) @db.Uuid
+  message_id String                      @db.Uuid
+  seq        Int
+  content    String                      @db.Text
+  embedding  Unsupported("vector(768)")?
+  created_at DateTime                    @default(now()) @db.Timestamptz
+
+  message message @relation(fields: [message_id], references: [id])
+
+  @@index([message_id, seq])
 }
 
 model memory {

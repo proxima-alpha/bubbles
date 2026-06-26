@@ -13,7 +13,6 @@ export class ChatRepository {
     user_id: string;
     role: string;
     content: string;
-    summary?: string | null;
     provider?: string;
     model?: string;
     input_tokens?: number | null;
@@ -23,10 +22,19 @@ export class ChatRepository {
     return this.prisma.message.create({ data });
   }
 
-  async updateMessageSummaryAndEmbedding(messageId: string, summary: string, vec: number[]) {
+  async updateMessageEmbedding(messageId: string, vec: number[]) {
     return this.prisma.$executeRaw`
-      UPDATE message SET summary = ${summary}, embedding = ${`[${vec.join(',')}]`}::vector WHERE id = ${messageId}::uuid
+      UPDATE message SET embedding = ${`[${vec.join(',')}]`}::vector WHERE id = ${messageId}::uuid
     `;
+  }
+
+  async insertMessageContents(messageId: string, sentences: { seq: number; content: string; embedding: number[] }[]) {
+    await Promise.all(
+      sentences.map(s => this.prisma.$executeRaw`
+        INSERT INTO message_content (id, message_id, seq, content, embedding)
+        VALUES (gen_random_uuid(), ${messageId}::uuid, ${s.seq}, ${s.content}, ${`[${s.embedding.join(',')}]`}::vector)
+      `),
+    );
   }
 
   async findRecentMessages(userId: string, take: number) {

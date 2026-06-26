@@ -31,7 +31,6 @@ export interface MessageForBatch {
   content: string;
   terms: string[];
   embedding: number[];
-  summary: string;
 }
 
 export interface Exchange {
@@ -78,7 +77,7 @@ export class MemoryRepository {
 
   async findUnprocessedExchanges(userId: string): Promise<Exchange[]> {
     const rows = await this.prisma.$queryRaw<(MessageForBatch & { parent_message_id: string | null })[]>`
-      SELECT id, role, provider, content, terms, summary, embedding::float4[] AS embedding, parent_message_id
+      SELECT id, role, provider, content, terms, embedding::float4[] AS embedding, parent_message_id
       FROM message
       WHERE user_id = ${userId}::uuid
         AND is_proceeded = false
@@ -390,5 +389,64 @@ export class MemoryRepository {
         summary,
       },
     });
+  }
+
+  async findAssociations(
+    contentEmbeddings: number[][],
+    messageIds: string[],
+  ): Promise<string[][]> {
+    if (contentEmbeddings.length === 0 || messageIds.length === 0) {
+      return contentEmbeddings.map(() => []);
+    }
+
+    const embArrayLiteral = contentEmbeddings
+      .map(e => `'[${e.join(',')}]'::vector(768)`)
+      .join(',');
+    const messageIdList = messageIds.map(id => `'${id}'::uuid`).join(',');
+
+    const rows = await this.prisma.$queryRawUnsafe<{ content_idx: number; message_id: string; final_score: number }[]>(`
+      WITH query_embeddings AS (
+        SELECT
+          ordinality - 1       AS content_idx,
+          embedding            AS query_embedding
+        FROM unnest(ARRAY[${embArrayLiteral}]) WITH ORDINALITY AS t(embedding, ordinality)
+      ),
+      scored AS (
+        SELECT
+          qe.content_idx,
+          mc.message_id,
+          1 - (mc.embedding <=> qe.query_embedding) AS similarity,
+          ROW_NUMBER() OVER (
+            PARTITION BY qe.content_idx, mc.message_id
+            ORDER BY mc.embedding <=> qe.query_embedding
+          ) AS rn
+        FROM query_embeddings qe
+        CROSS JOIN message_content mc
+        WHERE mc.message_id = ANY(ARRAY[${messageIdList}])
+      ),
+      top2 AS (
+        SELECT
+          content_idx,
+          message_id,
+          MAX(CASE WHEN rn = 1 THEN similarity END) AS top1,
+          MAX(CASE WHEN rn = 2 THEN similarity END) AS top2
+        FROM scored
+        WHERE rn <= 2
+        GROUP BY content_idx, message_id
+      )
+      SELECT
+        content_idx,
+        message_id,
+        CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END AS final_score
+      FROM top2
+      WHERE CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END >= 0.75
+      ORDER BY content_idx, final_score DESC
+    `);
+
+    const associations: string[][] = contentEmbeddings.map(() => []);
+    for (const row of rows) {
+      associations[row.content_idx].push(row.message_id);
+    }
+    return associations;
   }
 }
