@@ -391,6 +391,69 @@ export class MemoryRepository {
     });
   }
 
+  async logAssociations(
+    contentEmbeddings: number[][],
+    messageIds: string[],
+  ): Promise<void> {
+    if (contentEmbeddings.length === 0 || messageIds.length === 0) {
+      console.log('[logAssociations] empty input');
+      return;
+    }
+
+    const embArrayLiteral = contentEmbeddings
+      .map(e => `'[${e.join(',')}]'::vector(768)`)
+      .join(',');
+    const messageIdList = messageIds.map(id => `'${id}'::uuid`).join(',');
+
+    const rows = await this.prisma.$queryRawUnsafe<{
+      content_idx: number;
+      message_id: string;
+      top1: number;
+      top2: number | null;
+      final_score: number;
+    }[]>(`
+      WITH query_embeddings AS (
+        SELECT
+          ordinality - 1       AS content_idx,
+          embedding            AS query_embedding
+        FROM unnest(ARRAY[${embArrayLiteral}]) WITH ORDINALITY AS t(embedding, ordinality)
+      ),
+      scored AS (
+        SELECT
+          qe.content_idx,
+          mc.message_id,
+          1 - (mc.embedding <=> qe.query_embedding) AS similarity,
+          ROW_NUMBER() OVER (
+            PARTITION BY qe.content_idx, mc.message_id
+            ORDER BY mc.embedding <=> qe.query_embedding
+          ) AS rn
+        FROM query_embeddings qe
+        CROSS JOIN message_content mc
+        WHERE mc.message_id = ANY(ARRAY[${messageIdList}])
+      ),
+      top2 AS (
+        SELECT
+          content_idx,
+          message_id,
+          MAX(CASE WHEN rn = 1 THEN similarity END) AS top1,
+          MAX(CASE WHEN rn = 2 THEN similarity END) AS top2
+        FROM scored
+        WHERE rn <= 2
+        GROUP BY content_idx, message_id
+      )
+      SELECT
+        content_idx,
+        message_id,
+        top1,
+        top2,
+        CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END AS final_score
+      FROM top2
+      ORDER BY content_idx, final_score DESC
+    `);
+
+    console.log('[logAssociations]', JSON.stringify(rows, (_, v) => typeof v === 'bigint' ? Number(v) : v, 2));
+  }
+
   async findAssociations(
     contentEmbeddings: number[][],
     messageIds: string[],

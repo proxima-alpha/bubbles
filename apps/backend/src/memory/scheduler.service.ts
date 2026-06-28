@@ -237,6 +237,8 @@ ${contextSection}
     if (assistantMessages.length === 0) return contents.map(() => []);
 
     const contentEmbeddings = await this.modelService.embedTextsChunked(contents, 'search_query: ');
+    // console.log(contents)
+    // await this.memoryRepo.logAssociations(contentEmbeddings, assistantMessages.map(m => m.id))
     return this.memoryRepo.findAssociations(contentEmbeddings, assistantMessages.map(m => m.id));
   }
 
