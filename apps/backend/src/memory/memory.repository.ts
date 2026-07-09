@@ -30,13 +30,12 @@ export interface MessageForBatch {
   provider: string | null;
   content: string;
   terms: string[];
-  embedding: number[];
 }
 
 export interface Exchange {
-  id: string; // assistant message ID (or standalone message ID)
+  id: string; // assistant message ID
   messages: MessageForBatch[];
-  embedding: number[]; // centroid of message embeddings in this exchange
+  contentEmbeddings: number[][]; // message_content embeddings from the assistant message
 }
 
 export interface SaveArgs {
@@ -76,45 +75,64 @@ export class MemoryRepository {
   ) {}
 
   async findUnprocessedExchanges(userId: string): Promise<Exchange[]> {
-    const rows = await this.prisma.$queryRaw<(MessageForBatch & { parent_message_id: string | null })[]>`
-      SELECT id, role, provider, content, terms, embedding::float4[] AS embedding, parent_message_id
-      FROM message
-      WHERE user_id = ${userId}::uuid
-        AND is_proceeded = false
-        AND embedding IS NOT NULL
-      ORDER BY created_at ASC
+    const assistantRows = await this.prisma.$queryRaw<
+      (MessageForBatch & { parent_message_id: string | null })[]
+    >`
+      SELECT m.id, m.role, m.provider, m.content, m.terms, m.parent_message_id
+      FROM message m
+      WHERE m.user_id = ${userId}::uuid
+        AND m.is_proceeded = false
+        AND m.role != 'user'
+        AND EXISTS (SELECT 1 FROM message_content mc WHERE mc.message_id = m.id)
+      ORDER BY m.created_at ASC
     `;
 
-    const msgById = new Map(rows.map(m => [m.id, m]));
-    const usedIds = new Set<string>();
-    const exchanges: Exchange[] = [];
+    if (assistantRows.length === 0) return [];
 
-    // 1st pass: assistant 메시지 기준으로 user 메시지와 페어링
-    for (const msg of rows) {
-      if (msg.role === 'user' || !msg.parent_message_id) continue;
-      const parent = msgById.get(msg.parent_message_id);
-      if (!parent || usedIds.has(parent.id) || usedIds.has(msg.id)) continue;
+    const assistantIds = assistantRows.map(m => m.id);
+    const parentIds = assistantRows.map(m => m.parent_message_id).filter((id): id is string => id !== null);
 
-      const msgs = [parent, msg];
-      exchanges.push({ id: msg.id, messages: msgs, embedding: centroid(msgs.map(m => m.embedding)) });
-      usedIds.add(parent.id);
-      usedIds.add(msg.id);
+    const [userRows, contentRows] = await Promise.all([
+      parentIds.length > 0
+        ? this.prisma.$queryRaw<MessageForBatch[]>`
+            SELECT id, role, provider, content, terms
+            FROM message
+            WHERE id = ANY(${parentIds}::uuid[])
+              AND is_proceeded = false
+          `
+        : Promise.resolve([] as MessageForBatch[]),
+      this.prisma.$queryRaw<{ message_id: string; embedding: number[] }[]>`
+        SELECT message_id, embedding::float4[] AS embedding
+        FROM message_content
+        WHERE message_id = ANY(${assistantIds}::uuid[])
+        ORDER BY message_id, seq ASC
+      `,
+    ]);
+
+    const userById = new Map(userRows.map(m => [m.id, m]));
+    const contentEmbeddingsByMsgId = new Map<string, number[][]>();
+    for (const row of contentRows) {
+      if (!contentEmbeddingsByMsgId.has(row.message_id)) contentEmbeddingsByMsgId.set(row.message_id, []);
+      contentEmbeddingsByMsgId.get(row.message_id)!.push(row.embedding);
     }
 
-    // 2nd pass: 페어링 안 된 메시지는 standalone exchange
-    for (const msg of rows) {
-      if (usedIds.has(msg.id)) continue;
-      exchanges.push({ id: msg.id, messages: [msg], embedding: msg.embedding });
-      usedIds.add(msg.id);
-    }
-
-    return exchanges;
+    return assistantRows.map(aMsg => {
+      const messages: MessageForBatch[] = [];
+      if (aMsg.parent_message_id) {
+        const parent = userById.get(aMsg.parent_message_id);
+        if (parent) messages.push(parent);
+      }
+      messages.push({ id: aMsg.id, role: aMsg.role, provider: aMsg.provider, content: aMsg.content, terms: aMsg.terms });
+      return { id: aMsg.id, messages, contentEmbeddings: contentEmbeddingsByMsgId.get(aMsg.id) ?? [] };
+    });
   }
 
   async findUsersOverThreshold(threshold: number): Promise<string[]> {
     const rows = await this.prisma.$queryRaw<{ user_id: string }[]>`
-      SELECT user_id FROM message
-      WHERE is_proceeded = false AND embedding IS NOT NULL
+      SELECT user_id FROM message m
+      WHERE m.is_proceeded = false
+        AND m.role != 'user'
+        AND EXISTS (SELECT 1 FROM message_content mc WHERE mc.message_id = m.id)
       GROUP BY user_id
       HAVING COUNT(*) >= ${threshold}
     `;
@@ -128,7 +146,8 @@ export class MemoryRepository {
       WHERE (s.id IS NULL OR s.updated_at < NOW() - (${intervalHours} || ' hours')::interval)
         AND EXISTS (
           SELECT 1 FROM message m
-          WHERE m.user_id = u.id AND m.is_proceeded = false AND m.embedding IS NOT NULL
+          WHERE m.user_id = u.id AND m.is_proceeded = false AND m.role != 'user'
+            AND EXISTS (SELECT 1 FROM message_content mc WHERE mc.message_id = m.id)
         )
     `;
     return rows.map(r => r.user_id);
@@ -261,9 +280,10 @@ export class MemoryRepository {
   async updateRepetitionStrength(
     tx: Prisma.TransactionClient,
     userId: string,
-    processedMessages: { id: string; embedding: number[] }[],
+    contentEmbeddings: number[][],
     batchIds: string[],
   ) {
+    if (contentEmbeddings.length === 0) return;
     const similarityThreshold = this.config.get<number>('REPETITION_SIMILARITY_THRESHOLD', 0.6);
 
     const existingMemories = await tx.$queryRaw<{ id: string; embedding: number[] }[]>`
@@ -278,8 +298,8 @@ export class MemoryRepository {
 
     for (const memory of existingMemories) {
       let maxSim = 0;
-      for (const msg of processedMessages) {
-        const sim = cosineSimilarity(msg.embedding, memory.embedding);
+      for (const emb of contentEmbeddings) {
+        const sim = cosineSimilarity(emb, memory.embedding);
         if (sim > maxSim) maxSim = sim;
       }
       if (maxSim >= similarityThreshold) {

@@ -1,5 +1,5 @@
 /**
- * 수동 실행용 테스트 — 실제 DB/LLM에 연결해서 runBatch를 직접 실행한다.
+ * 수동 실행용 테스트 — 실제 DB/LLM에 연결해서 executeMemorization를 직접 실행한다.
  * target_ids에 테스트할 user_id를 넣고 아래 명령으로 실행:
  *   npx dotenv -e .env -- jest scheduler.manual --runInBand
  */
@@ -31,13 +31,13 @@ describe('SchedulerService (manual)', () => {
   });
 
   it.each(target_ids.length ? target_ids : ['__skip__'])(
-    'runBatch for user %s',
+    'executeMemorization for user %s',
     async (userId) => {
       if (userId === '__skip__') {
         console.log('target_ids가 비어있습니다. user_id를 넣고 다시 실행하세요.');
         return;
       }
-      const results = await service.runBatch(userId);
+      const results = await service.executeMemorization(userId);
       console.log(`[${userId}] processed ${results.length} memories`, results);
       await service.updateMainMemory(userId, results);
     },

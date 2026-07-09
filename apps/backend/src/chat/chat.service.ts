@@ -113,15 +113,11 @@ export class ChatService {
         if (sentences.length === 0) return;
 
         const embeddings = await this.modelService.embedTextsChunked(sentences, 'search_document: ');
-        const centroid = embeddings[0].map((_, i) => embeddings.reduce((s, e) => s + e[i], 0) / embeddings.length);
 
-        await Promise.all([
-          this.chatRepo.updateMessageEmbedding(assistantMsg.id, centroid),
-          this.chatRepo.insertMessageContents(
-            assistantMsg.id,
-            sentences.map((content, seq) => ({ seq, content, embedding: embeddings[seq] })),
-          ),
-        ]);
+        await this.chatRepo.insertMessageContents(
+          assistantMsg.id,
+          sentences.map((content, seq) => ({ seq, content, embedding: embeddings[seq] })),
+        );
       })
       .catch(e => console.error('summary/embed failed', e));
 

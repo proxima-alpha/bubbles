@@ -60,7 +60,7 @@ export class SchedulerService {
 
     // for (const user_id of targetIds) {
     //   try {
-    //     const batchResults = await this.runBatch(user_id);
+    //     const batchResults = await this.executeMemorization(user_id);
     //     await this.updateMainMemory(user_id, batchResults);
     //     await this.prisma.schedule.upsert({
     //       where: { user_id_type: { user_id, type: 'memory_batch' } },
@@ -73,17 +73,17 @@ export class SchedulerService {
     // }
   }
 
-  async runBatch(userId: string): Promise<BatchMemoryResult[]> {
+  async executeMemorization(userId: string): Promise<BatchMemoryResult[]> {
     const minClusterSize = this.config.get<number>('CLUSTERING_MIN_CLUSTER_SIZE', 2);
 
     const exchanges = await this.memoryRepo.findUnprocessedExchanges(userId);
     if (exchanges.length === 0) return [];
 
-    const groups: GroupArgs[] = [];
+    const rawGroups: GroupArgs[] = [];
 
     if (exchanges.length < minClusterSize) {
       for (const exchange of exchanges) {
-        groups.push(await this.prepareGroup(userId, [exchange]));
+        rawGroups.push(await this.prepareGroup(userId, [exchange]));
       }
     } else {
       const exchangeTexts = exchanges.map(e => e.messages.map(m => m.content).join('\n'));
@@ -98,12 +98,14 @@ export class SchedulerService {
           this.prepareGroup(userId, cluster.ids.map((id: string) => exchangeMap.get(id)!)),
         ),
       );
-      for (const g of clusterGroups) groups.push(g);
+      for (const g of clusterGroups) rawGroups.push(g);
 
       for (const noiseId of clusterResult.noise) {
-        groups.push(await this.prepareGroup(userId, [exchangeMap.get(noiseId)!]));
+        rawGroups.push(await this.prepareGroup(userId, [exchangeMap.get(noiseId)!]));
       }
     }
+
+    const groups = this.consolidateByTarget(rawGroups);
 
     const pendingSaves: SaveArgs[] = [];
     for (const group of groups) {
@@ -114,27 +116,52 @@ export class SchedulerService {
       }
     }
 
-    const allMessages = exchanges.flatMap(e => e.messages);
+    const allContentEmbeddings = exchanges.flatMap(e => e.contentEmbeddings);
     return this.prisma.$transaction(async (tx) => {
       const batchResults: BatchMemoryResult[] = [];
       for (const args of pendingSaves) {
         batchResults.push(await this.memoryRepo.saveMemory(tx, userId, args));
       }
-      await this.memoryRepo.updateRepetitionStrength(tx, userId, allMessages, batchResults.map(r => r.id));
+      await this.memoryRepo.updateRepetitionStrength(tx, userId, allContentEmbeddings, batchResults.map(r => r.id));
       return batchResults;
     });
+  }
+
+  private consolidateByTarget(groups: GroupArgs[]): GroupArgs[] {
+    const byTarget = new Map<string, GroupArgs[]>();
+    const noTarget: GroupArgs[] = [];
+
+    for (const group of groups) {
+      if (!group.existingMemory) {
+        noTarget.push(group);
+      } else {
+        const key = group.existingMemory.id;
+        if (!byTarget.has(key)) byTarget.set(key, []);
+        byTarget.get(key)!.push(group);
+      }
+    }
+
+    const merged: GroupArgs[] = [...noTarget];
+    for (const sameTarget of byTarget.values()) {
+      merged.push({
+        messages: sameTarget.flatMap(g => g.messages),
+        memCentroid: centroid(sameTarget.map(g => g.memCentroid)),
+        existingMemory: sameTarget[0].existingMemory,
+      });
+    }
+    return merged;
   }
 
   private async prepareGroup(userId: string, exchanges: Exchange[]): Promise<GroupArgs> {
     const mergeMaxSimilarity = this.config.get<number>('MERGE_MAX_SIMILARITY', 0.8);
     const mergeAvgSimilarity = this.config.get<number>('MERGE_AVG_SIMILARITY', 0.7);
 
-    const exchangeEmbeddings = exchanges.map(e => e.embedding);
-    const clusterCentroid = centroid(exchangeEmbeddings);
+    const allContentEmbeddings = exchanges.flatMap(e => e.contentEmbeddings);
+    const clusterCentroid = centroid(allContentEmbeddings);
 
     const avgSimilarity =
-      exchangeEmbeddings.reduce((acc, v) => acc + cosineSimilarity(v, clusterCentroid), 0) /
-      exchangeEmbeddings.length;
+      allContentEmbeddings.reduce((acc, v) => acc + cosineSimilarity(v, clusterCentroid), 0) /
+      allContentEmbeddings.length;
 
     const existingMemory = await this.memoryRepo.findSimilarMemory(userId, clusterCentroid, mergeMaxSimilarity);
     const isMerge = existingMemory !== null && avgSimilarity >= mergeAvgSimilarity;
