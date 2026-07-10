@@ -157,11 +157,11 @@ export class MemoryRepository {
     userId: string,
     vec: number[],
     threshold: number,
-  ): Promise<{ id: string; content: string | null; version: number; root_memory_id: string | null } | null> {
+  ): Promise<{ id: string; version: number; root_memory_id: string | null } | null> {
     const rows = await this.prisma.$queryRaw<
-      { id: string; content: string | null; version: number; root_memory_id: string | null; similarity: number }[]
+      { id: string; version: number; root_memory_id: string | null; similarity: number }[]
     >`
-      SELECT id, content, version, root_memory_id,
+      SELECT id, version, root_memory_id,
              (1 - (embedding <=> ${`[${vec.join(',')}]`}::vector)) AS similarity
       FROM memory
       WHERE user_id = ${userId}::uuid
@@ -174,6 +174,19 @@ export class MemoryRepository {
 
     if (rows.length === 0 || rows[0].similarity < threshold) return null;
     return rows[0];
+  }
+
+  async findMemoryMessages(memoryId: string): Promise<MessageForBatch[]> {
+    return this.prisma.$queryRaw<MessageForBatch[]>`
+      SELECT id, role, provider, content, terms FROM (
+        SELECT DISTINCT m.id, m.role, m.provider, m.content, m.terms, m.created_at
+        FROM memory_content mc
+        JOIN memory_content__message mcm ON mcm.memory_content_id = mc.id
+        JOIN message m ON m.id = mcm.message_id
+        WHERE mc.memory_id = ${memoryId}::uuid
+      ) t
+      ORDER BY created_at ASC
+    `;
   }
 
   async saveMemory(
