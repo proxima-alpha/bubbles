@@ -151,7 +151,7 @@ export default function ChatPage() {
         </div>
       ) : (
         <>
-          <main className="flex-1 overflow-y-auto px-4 py-6 max-w-3xl mx-auto w-full">
+          <main className="flex-1 overflow-y-auto px-4 py-6 max-w-2xl mx-auto w-full">
             {historyLoading && (
               <p className="text-center text-gray-400 text-sm">불러오는 중...</p>
             )}
@@ -220,7 +220,7 @@ export default function ChatPage() {
           </main>
 
           <footer className="border-t bg-white px-4 py-3">
-            <form onSubmit={handleSubmit} className="flex gap-2 max-w-3xl mx-auto">
+            <form onSubmit={handleSubmit} className="flex gap-2 max-w-2xl mx-auto">
               <input
                 value={input}
                 onChange={e => setInput(e.target.value)}

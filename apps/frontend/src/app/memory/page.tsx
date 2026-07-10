@@ -29,7 +29,7 @@ export default function MemoryPage() {
     <div className="min-h-screen flex flex-col bg-gray-50">
       <HeaderNav />
 
-      <main className="flex-1 px-4 py-6 max-w-3xl mx-auto w-full">
+      <main className="flex-1 px-4 py-6 max-w-2xl mx-auto w-full">
         <h2 className="text-base font-semibold mb-4">지식 메모리</h2>
 
         {isLoading && (
