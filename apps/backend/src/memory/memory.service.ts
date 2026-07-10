@@ -15,12 +15,24 @@ export class MemoryService {
 
   async getKnowledgeList(userId: string) {
     const memories = await this.memoryRepo.getKnowledgeList(userId);
-    return memories.map(m => ({
+    return memories.map(m => this.formatKnowledge(m));
+  }
+
+  private formatKnowledge(m: {
+    id: string;
+    keywords: { keyword_code: string; keyword: { name: string } }[];
+    contents: { id: string; content: string }[];
+    version: number;
+    is_pinned: boolean;
+    created_at: Date;
+  }) {
+    return {
       id: m.id,
       keywords: m.keywords.map(mk => ({ code: mk.keyword_code, name: mk.keyword.name })),
+      contents: m.contents.map(c => ({ id: c.id, content: c.content })),
       version: m.version,
       isPinned: m.is_pinned,
       createdAt: m.created_at,
-    }));
+    };
   }
 }

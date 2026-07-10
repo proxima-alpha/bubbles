@@ -387,6 +387,7 @@ export class MemoryRepository {
       orderBy: { created_at: 'desc' },
       include: {
         keywords: { include: { keyword: true } },
+        contents: true,
       },
     });
   }
