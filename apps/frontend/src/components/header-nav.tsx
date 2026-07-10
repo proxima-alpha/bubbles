@@ -15,11 +15,13 @@ export function HeaderNav() {
   };
 
   return (
-    <header className="border-b bg-white px-4 py-3 flex items-center justify-between relative">
-      <h1 className="font-bold text-lg">Bubbles</h1>
-      <div className="flex items-center gap-4 text-sm">
-        <Link href="/chat" className="text-gray-600 hover:text-black">채팅</Link>
-        <Link href="/memory" className="text-gray-600 hover:text-black">메모리</Link>
+    <header className="sticky top-0 z-10 border-b bg-white">
+      <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <h1 className="font-bold text-lg">Bubbles</h1>
+          <Link href="/chat" className="text-sm text-gray-600 hover:text-black">채팅</Link>
+          <Link href="/memory" className="text-sm text-gray-600 hover:text-black">메모리</Link>
+        </div>
         <div className="relative">
           <button onClick={() => setMenuOpen(v => !v)} className="text-gray-600 hover:text-black px-1">
             ⋮

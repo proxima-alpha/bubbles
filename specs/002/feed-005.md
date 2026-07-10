@@ -160,6 +160,15 @@ async findContentMessages(userId: string, contentId: string) {
 
 ---
 
+## Task 7 — `HeaderNav` 레이아웃: sticky + 너비
+
+- `sticky top-0 z-10` 적용 — 아래로 스크롤해도 헤더가 고정되도록
+- 좌측: "Bubbles" 타이틀 바로 옆에 `채팅`/`메모리` 링크 (가운데 정렬 아님, 왼쪽으로 그룹핑)
+- 우측: `⋮` 드롭다운 (프로필/로그아웃)
+- 헤더 안쪽 컨텐츠 너비는 `max-w-4xl` — 본문(`chat`/`memory`의 `<main>`, `max-w-2xl`)보다 의도적으로 넓게 유지, 정렬은 맞추지 않음
+
+---
+
 ## 영향 범위
 
 - `components/header-nav.tsx` — 신규, 공통 헤더(채팅/메모리 링크 + 프로필/로그아웃 드롭다운)
@@ -181,3 +190,4 @@ async findContentMessages(userId: string, contentId: string) {
 - [x] T4. `memory.repository.ts` / `memory.service.ts` / `memory.controller.ts` — 근거 메시지 API 추가
 - [x] T5. `memory/page.tsx` — 그리드 뷰로 변경
 - [x] T6. `embla-carousel-react` 설치 + `memory/[id]/page.tsx` — 상세 페이지 신규 (history 캐러셀 + content 클릭 → 근거 메시지)
+- [x] T7. `components/header-nav.tsx` — 3-column 레이아웃(가운데 정렬) + `sticky` 헤더
