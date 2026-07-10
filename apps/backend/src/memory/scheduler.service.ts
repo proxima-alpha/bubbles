@@ -107,7 +107,10 @@ export class SchedulerService {
 
     const pendingSaves: SaveArgs[] = [];
     for (const group of groups) {
-      const analysis = await this.callLlmForAnalysis(userId, group.messages, group.existingMemory?.content);
+      const existingMessages = group.existingMemory
+        ? await this.memoryRepo.findMemoryMessages(group.existingMemory.id)
+        : undefined;
+      const analysis = await this.callLlmForAnalysis(userId, group.messages, existingMessages);
       if (analysis.contents.length > 0) {
         const associations = await this.runAssociationMapping(analysis.contents, group.messages);
         pendingSaves.push({...group, analysis: {...analysis, associations}});
@@ -173,17 +176,22 @@ export class SchedulerService {
 
   private async callLlmForAnalysis(
     userId: string,
-    messages: { id: string; role: string; provider: string | null; content: string }[],
-    existingContent?: string | null,
+    messages: MessageForBatch[],
+    existingMessages?: MessageForBatch[],
   ): Promise<LlmMemoryAnalysis> {
-    const inputArray = messages.map(m => ({
-      [m.role === 'user' ? 'user' : (m.provider ?? 'assistant')]: {
-        text: m.content,
-        message_id: m.role !== 'user' ? m.id : null,
-      },
-    }));
+    const formatMessages = (msgs: MessageForBatch[]) =>
+      msgs.map(m => ({
+        [m.role === 'user' ? 'user' : (m.provider ?? 'assistant')]: {
+          text: m.content,
+          message_id: m.role !== 'user' ? m.id : null,
+        },
+      }));
 
-    const contextSection = existingContent ? `[기존 메모리]\n${existingContent}\n\n` : '';
+    const inputArray = formatMessages(messages);
+
+    const contextSection = existingMessages && existingMessages.length > 0
+      ? `[기존 메모리 원본 대화]\n${JSON.stringify(formatMessages(existingMessages), null, 2)}\n\n`
+      : '';
 
     const prompt = `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
