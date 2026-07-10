@@ -15,7 +15,7 @@ import {
 interface GroupArgs {
   messages: MessageForBatch[];
   memCentroid: number[];
-  existingMemory: { id: string; content: string | null; version: number; root_memory_id: string | null } | null;
+  existingMemory: { id: string; version: number; root_memory_id: string | null } | null;
 }
 
 function centroid(vectors: number[][]): number[] {
@@ -74,14 +74,12 @@ export class SchedulerService {
   }
 
   async executeMemorization(userId: string): Promise<BatchMemoryResult[]> {
-    const minClusterSize = this.config.get<number>('CLUSTERING_MIN_CLUSTER_SIZE', 2);
-
     const exchanges = await this.memoryRepo.findUnprocessedExchanges(userId);
     if (exchanges.length === 0) return [];
 
     const rawGroups: GroupArgs[] = [];
 
-    if (exchanges.length < minClusterSize) {
+    if (exchanges.length <= 1) {
       for (const exchange of exchanges) {
         rawGroups.push(await this.prepareGroup(userId, [exchange]));
       }
