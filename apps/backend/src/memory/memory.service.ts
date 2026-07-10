@@ -28,6 +28,10 @@ export class MemoryService {
     return memories.map(m => this.formatKnowledge(m));
   }
 
+  async getContentMessages(userId: string, contentId: string) {
+    return this.memoryRepo.findContentMessages(userId, contentId);
+  }
+
   private formatKnowledge(m: {
     id: string;
     keywords: { keyword_code: string; keyword: { name: string } }[];

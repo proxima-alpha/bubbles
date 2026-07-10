@@ -21,4 +21,9 @@ export class MemoryController {
   getKnowledgeHistory(@Request() req: { user: { id: string } }, @Param('id') id: string) {
     return this.memoryService.getKnowledgeHistory(req.user.id, id);
   }
+
+  @Get('content/:id/messages')
+  getContentMessages(@Request() req: { user: { id: string } }, @Param('id') id: string) {
+    return this.memoryService.getContentMessages(req.user.id, id);
+  }
 }

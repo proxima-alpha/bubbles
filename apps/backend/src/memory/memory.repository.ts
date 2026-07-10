@@ -447,6 +447,19 @@ export class MemoryRepository {
     });
   }
 
+  async findContentMessages(userId: string, contentId: string) {
+    return this.prisma.$queryRaw<{ id: string; role: string; provider: string | null; content: string; created_at: Date }[]>`
+      SELECT m.id, m.role, m.provider, m.content, m.created_at
+      FROM memory_content__message mcm
+      JOIN message m ON m.id = mcm.message_id
+      JOIN memory_content mc ON mc.id = mcm.memory_content_id
+      JOIN memory mem ON mem.id = mc.memory_id
+      WHERE mcm.memory_content_id = ${contentId}::uuid
+        AND mem.user_id = ${userId}::uuid
+      ORDER BY m.created_at ASC
+    `;
+  }
+
   async logAssociations(
     contentEmbeddings: number[][],
     messageIds: string[],
