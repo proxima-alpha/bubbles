@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards, Request } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { MemoryService } from './memory.service';
 
@@ -10,5 +10,15 @@ export class MemoryController {
   @Get('knowledge')
   getKnowledge(@Request() req: { user: { id: string } }) {
     return this.memoryService.getKnowledgeList(req.user.id);
+  }
+
+  @Get('knowledge/:id')
+  getKnowledgeDetail(@Request() req: { user: { id: string } }, @Param('id') id: string) {
+    return this.memoryService.getKnowledgeDetail(req.user.id, id);
+  }
+
+  @Get('knowledge/:id/history')
+  getKnowledgeHistory(@Request() req: { user: { id: string } }, @Param('id') id: string) {
+    return this.memoryService.getKnowledgeHistory(req.user.id, id);
   }
 }

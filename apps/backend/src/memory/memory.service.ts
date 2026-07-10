@@ -18,6 +18,16 @@ export class MemoryService {
     return memories.map(m => this.formatKnowledge(m));
   }
 
+  async getKnowledgeDetail(userId: string, id: string) {
+    const memory = await this.memoryRepo.findKnowledgeMemory(userId, id);
+    return memory ? this.formatKnowledge(memory) : null;
+  }
+
+  async getKnowledgeHistory(userId: string, id: string) {
+    const memories = await this.memoryRepo.findMemoryHistory(userId, id);
+    return memories.map(m => this.formatKnowledge(m));
+  }
+
   private formatKnowledge(m: {
     id: string;
     keywords: { keyword_code: string; keyword: { name: string } }[];

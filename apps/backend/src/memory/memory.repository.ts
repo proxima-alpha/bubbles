@@ -392,6 +392,28 @@ export class MemoryRepository {
     });
   }
 
+  async findKnowledgeMemory(userId: string, id: string) {
+    return this.prisma.memory.findFirst({
+      where: { id, user_id: userId, type: 'knowledge' },
+      include: { keywords: { include: { keyword: true } }, contents: true },
+    });
+  }
+
+  async findMemoryHistory(userId: string, id: string) {
+    const target = await this.prisma.memory.findFirst({
+      where: { id, user_id: userId, type: 'knowledge' },
+      select: { id: true, root_memory_id: true },
+    });
+    if (!target) return [];
+    const rootId = target.root_memory_id ?? target.id;
+
+    return this.prisma.memory.findMany({
+      where: { user_id: userId, type: 'knowledge', OR: [{ id: rootId }, { root_memory_id: rootId }] },
+      orderBy: { version: 'desc' },
+      include: { keywords: { include: { keyword: true } }, contents: true },
+    });
+  }
+
   async applyDecay() {
     await this.prisma.$executeRaw`
       UPDATE memory
