@@ -85,11 +85,14 @@ for (const group of groups) {
     : undefined;
   const analysis = await this.callLlmForAnalysis(userId, group.messages, existingMessages);
   if (analysis.contents.length > 0) {
-    const associations = await this.runAssociationMapping(analysis.contents, group.messages);
+    const associationMessages = existingMessages ? [...existingMessages, ...group.messages] : group.messages;
+    const associations = await this.runAssociationMapping(analysis.contents, associationMessages);
     pendingSaves.push({...group, analysis: {...analysis, associations}});
   }
 }
 ```
+
+`runAssociationMapping`은 `analysis.contents`를 대상으로 근거 메시지를 찾는데, LLM이 `existingMessages`(기존 대화)에서 유래한 문장을 추출할 수도 있으므로 association 검색 대상 메시지에도 `existingMessages`를 포함해야 한다. 그렇지 않으면 해당 문장이 `saveMemory`의 `validPairs` 필터에서 근거 없음으로 걸러져 `memory_content`/`memory_content__message`가 안 만들어지고, 다음 병합 때 `findMemoryMessages`로 추적할 수 없게 되어 feed-004의 목적이 무력화된다.
 
 ### `callLlmForAnalysis` — `existingContent?: string | null` → `existingMessages?: MessageForBatch[]`
 
@@ -135,3 +138,4 @@ private async callLlmForAnalysis(
 - [x] T2. `scheduler.service.ts` — `GroupArgs.existingMemory` 타입에서 `content` 제거
 - [x] T3. `scheduler.service.ts` — `executeMemorization`에서 병합 그룹 단위로 `findMemoryMessages` 호출
 - [x] T4. `scheduler.service.ts` — `callLlmForAnalysis`를 `existingMessages: MessageForBatch[]` 기반으로 변경
+- [x] T5. `scheduler.service.ts` — `runAssociationMapping` 호출 시 association 검색 대상에 `existingMessages` 포함

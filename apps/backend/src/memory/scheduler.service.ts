@@ -112,7 +112,8 @@ export class SchedulerService {
         : undefined;
       const analysis = await this.callLlmForAnalysis(userId, group.messages, existingMessages);
       if (analysis.contents.length > 0) {
-        const associations = await this.runAssociationMapping(analysis.contents, group.messages);
+        const associationMessages = existingMessages ? [...existingMessages, ...group.messages] : group.messages;
+        const associations = await this.runAssociationMapping(analysis.contents, associationMessages);
         pendingSaves.push({...group, analysis: {...analysis, associations}});
       }
     }
