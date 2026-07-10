@@ -13,6 +13,7 @@ interface Keyword {
 interface KnowledgeMemory {
   id: string;
   keywords: Keyword[];
+  contents: { id: string; content: string }[];
   version: number;
   isPinned: boolean;
   createdAt: string;
@@ -39,10 +40,19 @@ export default function MemoryPage() {
           <p className="text-center text-gray-400 text-sm">아직 저장된 지식 메모리가 없습니다.</p>
         )}
 
-        <div className="space-y-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {memories.map(memory => (
-            <div key={memory.id} className="bg-white border rounded-xl px-4 py-3">
-              <div className="flex flex-wrap gap-1.5 mb-2">
+            <Link
+              key={memory.id}
+              href={`/memory/${memory.id}`}
+              className="bg-white border rounded-xl p-4 flex flex-col justify-between hover:border-gray-400 transition"
+            >
+              <ul className="text-sm text-gray-700 space-y-1 mb-3 line-clamp-6 list-disc list-inside">
+                {memory.contents.slice(0, 5).map(c => (
+                  <li key={c.id}>{c.content}</li>
+                ))}
+              </ul>
+              <div className="flex flex-wrap gap-1.5">
                 {memory.keywords.length > 0 ? (
                   memory.keywords.map(kw => (
                     <span
@@ -61,11 +71,7 @@ export default function MemoryPage() {
                   </span>
                 )}
               </div>
-              <div className="flex items-center justify-between text-xs text-gray-400">
-                <span>v{memory.version}</span>
-                <span>{new Date(memory.createdAt).toLocaleDateString('ko-KR')}</span>
-              </div>
-            </div>
+            </Link>
           ))}
         </div>
       </main>
