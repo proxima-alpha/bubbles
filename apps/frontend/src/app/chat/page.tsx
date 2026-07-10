@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import api from '@/lib/api';
+import { HeaderNav } from '@/components/header-nav';
 
 interface CodeDto {
   code: string;
@@ -131,24 +132,13 @@ export default function ChatPage() {
     }
   };
 
-  const handleLogout = async () => {
-    await api.post('/auth/logout');
-    router.replace('/login');
-  };
-
   if (profileLoading) {
     return <div className="min-h-screen flex items-center justify-center text-gray-400">로딩 중...</div>;
   }
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
-      <header className="border-b bg-white px-4 py-3 flex items-center justify-between">
-        <h1 className="font-bold text-lg">Bubbles</h1>
-        <div className="flex gap-4 text-sm">
-          <Link href="/profile" className="text-gray-600 hover:text-black">프로필</Link>
-          <button onClick={handleLogout} className="text-gray-600 hover:text-black">로그아웃</button>
-        </div>
-      </header>
+      <HeaderNav />
 
       {!userProfile?.model ? (
         <div className="flex-1 flex items-center justify-center">

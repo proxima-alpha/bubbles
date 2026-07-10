@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import api from '@/lib/api';
+import { HeaderNav } from '@/components/header-nav';
 
 interface Keyword {
   code: string;
@@ -25,13 +26,7 @@ export default function MemoryPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
-      <header className="border-b bg-white px-4 py-3 flex items-center justify-between">
-        <h1 className="font-bold text-lg">Bubbles</h1>
-        <div className="flex gap-4 text-sm">
-          <Link href="/chat" className="text-gray-600 hover:text-black">채팅</Link>
-          <Link href="/profile" className="text-gray-600 hover:text-black">프로필</Link>
-        </div>
-      </header>
+      <HeaderNav />
 
       <main className="flex-1 px-4 py-6 max-w-2xl mx-auto w-full">
         <h2 className="text-base font-semibold mb-4">지식 메모리</h2>
