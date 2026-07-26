@@ -7,6 +7,9 @@ import { Test } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import { SchedulerService } from './scheduler.service';
 import { MemoryRepository } from './memory.repository';
+import { ChatModule } from '../chat/chat.module';
+import { ChatService } from '../chat/chat.service';
+import { ChatRepository } from '../chat/chat.repository';
 import { ModelModule } from '../model/model.module';
 import { PrismaModule } from '../prisma/prisma.module';
 
@@ -42,4 +45,43 @@ describe('SchedulerService (manual)', () => {
       await service.updateMainMemory(userId, results);
     },
   );
+});
+
+describe('ChatService.generateMessageContents (manual)', () => {
+  let chatService: ChatService;
+  let chatRepo: ChatRepository;
+
+  jest.setTimeout(0);
+
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true }),
+        PrismaModule,
+        ModelModule,
+        ChatModule,
+      ],
+    }).compile();
+
+    chatService = module.get(ChatService);
+    chatRepo = module.get(ChatRepository);
+  });
+
+  it('message_content가 없는 assistant 메시지를 다시 생성한다', async () => {
+    const messages = await chatRepo.findAssistantMessagesWithoutContent();
+    if (messages.length === 0) {
+      console.log('message_content가 없는 메시지가 없습니다.');
+      return;
+    }
+
+    for (const message of messages) {
+      await chatService.generateMessageContents(
+        message.user_id,
+        message.parent_message!.content,
+        message.content,
+        message.id,
+      );
+      console.log(`[${message.id}] message_content regenerated`);
+    }
+  });
 });

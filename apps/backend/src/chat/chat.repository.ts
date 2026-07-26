@@ -52,4 +52,15 @@ export class ChatRepository {
       include: { provider_code: true, model_code: true },
     });
   }
+
+  async findAssistantMessagesWithoutContent() {
+    return this.prisma.message.findMany({
+      where: {
+        role: 'assistant',
+        parent_message_id: { not: null },
+        message_contents: { none: {} },
+      },
+      include: { parent_message: true },
+    });
+  }
 }

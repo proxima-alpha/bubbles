@@ -207,7 +207,7 @@ export class SchedulerService {
   3-1. 추출한 정보 중 keywords를 뽑는다
 
 - contents[i]: 추출·정제된 핵심 정보 한 문장
-- keywords: 이 대화의 핵심 주제. 대화 전체를 관통하는 중심 개념만.
+- keywords: contents의 핵심 주제. contents 전체를 관통하는 중심 개념만.
     · 부차적으로 언급된 세부 기법·예시는 키워드로 만들지 않는다
 - keywords[i].code: 영문 소문자·숫자·하이픈 (예: rag-technique)
 - keywords[i].name: 키워드명, 한글 선호, 괄호 등 부가설명 하지않음 
