@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import api from '@/lib/api';
 import { HeaderNav } from '@/components/header-nav';
+import { MarkdownContent } from '@/components/markdown-content';
 
 interface CodeDto {
   code: string;
@@ -160,8 +161,8 @@ export default function ChatPage() {
                 <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   {msg.role === 'assistant' ? (
                     <div className="flex flex-col items-start max-w-[75%]">
-                      <div className="bg-white border text-gray-800 rounded-2xl rounded-bl-sm px-4 py-2 text-sm whitespace-pre-wrap">
-                        {msg.content}
+                      <div className="bg-white border text-gray-800 rounded-2xl rounded-bl-sm px-4 py-2 text-sm">
+                        <MarkdownContent content={msg.content} />
                       </div>
                       <div className="flex items-center gap-1.5 mt-1.5">
                         <div className="w-10 h-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center text-xs font-bold flex-shrink-0">
@@ -185,8 +186,8 @@ export default function ChatPage() {
                       </div>
                     </div>
                   ) : (
-                    <div className="max-w-[75%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap bg-black text-white rounded-br-sm">
-                      {msg.content}
+                    <div className="max-w-[75%] rounded-2xl px-4 py-2 text-sm bg-black text-white rounded-br-sm">
+                      <MarkdownContent content={msg.content} />
                     </div>
                   )}
                 </div>
@@ -194,8 +195,8 @@ export default function ChatPage() {
               {isStreaming && (
                 <div className="flex justify-start">
                   <div className="flex flex-col items-start max-w-[75%]">
-                    <div className="bg-white border rounded-2xl rounded-bl-sm px-4 py-2 text-sm whitespace-pre-wrap text-gray-800">
-                      {streamingContent || <span className="text-gray-400">...</span>}
+                    <div className="bg-white border rounded-2xl rounded-bl-sm px-4 py-2 text-sm text-gray-800">
+                      {streamingContent ? <MarkdownContent content={streamingContent} /> : <span className="text-gray-400">...</span>}
                     </div>
                     <div className="flex items-center gap-1.5 mt-1.5">
                       <div className="w-10 h-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center text-xs font-bold flex-shrink-0">
