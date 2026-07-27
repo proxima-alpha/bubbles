@@ -198,8 +198,9 @@ model keyword {
 }
 
 model memory__keyword {
-  memory_id    String @db.Uuid
-  keyword_code String @db.VarChar
+  memory_id    String   @db.Uuid
+  keyword_code String   @db.VarChar
+  created_at   DateTime @default(now()) @db.Timestamptz
 
   @@id([memory_id, keyword_code])
 

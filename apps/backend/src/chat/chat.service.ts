@@ -112,33 +112,38 @@ export class ChatService {
       { role: 'user', content: `[질문]과 [응답]을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
 -주요 언어를 바꾸지 않는다 (질문 한 언어 선호)
--summary: 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출한다
-    . 항목화 하지 않는다 (numbering, listing 금지)
-    . 각 문장은 하나의 사실 또는 주장만 담는다.
-    . 한 문장 안에 여러 개념을 "그리고", "또한", "하며"로 과도하게 연결하지 않는다.
-    . 각 문장은 나중에 원문 메시지와 evidence 매핑될 수 있도록 독립적으로 작성한다.
-    . 같은 개념의 단어가 한국어로 표기된 경우 한국어를 사용한다.
+- 분석 절차:
+  1. [질문] 및 [응답]의 요약을 짧은 문장들의 문어체로 추출한다
+    · 기억할 가치가 있는 정보가 없으면 contents를 빈 배열([])로 둔다.
+    . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
+    . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
     . 한국어 표현이 없는 단어는 영어를 사용한다.
+  2. 추출한 요약을 문장 단위로 쪼개 각각 contents에 할당한다
+
+- contents[i]: 추출·정제된 핵심 정보 한 문장
 
 [질문]\n${questionContent}\n\n[응답]\n${answerContent}` },
     ], { num_predict: 150 }, {
       type: 'object',
-      properties: { summary: { type: 'string' } },
-      required: ['summary'],
+      properties: {
+        contents: {
+          type: 'array',
+          items: {
+            type: 'string',
+          },
+        },
+      },
+      required: ['contents'],
     });
 
-    const { summary } = JSON.parse(raw) as { summary: string };
-    const sentences = summary
-      .split(/\n+|(?<=[.!?。！？])\s+/)
-      .map(s => s.trim())
-      .filter(Boolean);
-    if (sentences.length === 0) return;
+    const { contents } = JSON.parse(raw) as { contents: string[] };
+    if (contents.length === 0) return;
 
-    const embeddings = await this.modelService.embedTextsChunked(sentences, 'search_document: ');
+    const embeddings = await this.modelService.embedTextsChunked(contents, 'search_document: ');
 
     await this.chatRepo.insertMessageContents(
       assistantMessageId,
-      sentences.map((content, seq) => ({ seq, content, embedding: embeddings[seq] })),
+      contents.map((content, seq) => ({ seq, content, embedding: embeddings[seq] })),
     );
   }
 }

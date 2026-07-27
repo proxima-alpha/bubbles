@@ -15,7 +15,7 @@ import {
 interface GroupArgs {
   messages: MessageForBatch[];
   memCentroid: number[];
-  existingMemory: { id: string; version: number; root_memory_id: string | null } | null;
+  existingMemory: { id: string; version: number; root_memory_id: string | null; content: string | null } | null;
 }
 
 function centroid(vectors: number[][]): number[] {
@@ -110,7 +110,7 @@ export class SchedulerService {
       const existingMessages = group.existingMemory
         ? await this.memoryRepo.findMemoryMessages(group.existingMemory.id)
         : undefined;
-      const analysis = await this.callLlmForAnalysis(userId, group.messages, existingMessages);
+      const analysis = await this.callLlmForAnalysis(userId, group.messages, group.existingMemory?.content ?? undefined);
       if (analysis.contents.length > 0) {
         const associationMessages = existingMessages ? [...existingMessages, ...group.messages] : group.messages;
         const associations = await this.runAssociationMapping(analysis.contents, associationMessages);
@@ -178,7 +178,7 @@ export class SchedulerService {
   private async callLlmForAnalysis(
     userId: string,
     messages: MessageForBatch[],
-    existingMessages?: MessageForBatch[],
+    existingContent?: string,
   ): Promise<LlmMemoryAnalysis> {
     const formatMessages = (msgs: MessageForBatch[]) =>
       msgs.map(m => ({
@@ -189,10 +189,7 @@ export class SchedulerService {
       }));
 
     const inputArray = formatMessages(messages);
-
-    const contextSection = existingMessages && existingMessages.length > 0
-      ? `[기존 메모리 원본 대화]\n${JSON.stringify(formatMessages(existingMessages), null, 2)}\n\n`
-      : '';
+    const existingSection = existingContent ? `[기존 기억]\n${existingContent}\n\n` : '';
 
     const prompt = `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
@@ -203,19 +200,21 @@ export class SchedulerService {
     . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
     . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
     . 한국어 표현이 없는 단어는 영어를 사용한다.
-  2-1. 추출한 핵심 정보를 문장 단위로 쪼개 각각 contents에 할당한다
-  3-1. 추출한 정보 중 keywords를 뽑는다
-
+  2. 추출한 핵심 정보를 문장 단위로 쪼개 각각 contents에 할당한다
+  3. 추출한 정보 중 keywords를 뽑는다
+  4. [기존 기억]이 있으면 이를 최대한 유지하고, 대화에서 새롭게 확인된 핵심 정보만 추가한다.
+     · 중복 내용은 추가하지 않는다.
+     · 기존 기억과 명백히 충돌하거나 변경된 경우에만 수정한다.
+     · 현재 대화와 관련이 없다는 이유로 기존 기억을 삭제하지 않는다.
 - contents[i]: 추출·정제된 핵심 정보 한 문장
 - keywords: contents의 핵심 주제. contents 전체를 관통하는 중심 개념만.
     · 부차적으로 언급된 세부 기법·예시는 키워드로 만들지 않는다
 - keywords[i].code: 영문 소문자·숫자·하이픈 (예: rag-technique)
-- keywords[i].name: 키워드명, 한글 선호, 괄호 등 부가설명 하지않음 
+- keywords[i].name: 키워드명, 한글 선호, 괄호 등 부가설명 하지않음
 - summary: contents 전체의 짧은 요약
 - 점수(0~1): importance(사용자 이해에 중요할수록 높음), durability(시간이 지나도 유효할수록 높음), reusefulness(재활용 가능성), sensitivity(민감정보일수록 높음), explicit_signal(사용자가 확정적으로 말할수록 높음), llm_confidence_hint(분석 신뢰도), temporary_penalty(장기 기억 가치가 낮을수록 높음 — 날씨·일시적 감정 → 높음, 직업·가치관 → 낮음)
 
-${contextSection}
-[대화]\n${JSON.stringify(inputArray, null, 2)}`;
+${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
 
     const schema = {
       type: 'object',
@@ -263,6 +262,7 @@ ${contextSection}
     if (!jsonMatch) throw new Error('LLM response has no JSON');
     return JSON.parse(jsonMatch[0]) as LlmMemoryAnalysis;
   }
+
   private async runAssociationMapping(
     contents: string[],
     messages: MessageForBatch[],

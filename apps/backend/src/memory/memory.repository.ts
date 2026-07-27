@@ -157,11 +157,11 @@ export class MemoryRepository {
     userId: string,
     vec: number[],
     threshold: number,
-  ): Promise<{ id: string; version: number; root_memory_id: string | null } | null> {
+  ): Promise<{ id: string; version: number; root_memory_id: string | null; content: string | null } | null> {
     const rows = await this.prisma.$queryRaw<
-      { id: string; version: number; root_memory_id: string | null; similarity: number }[]
+      { id: string; version: number; root_memory_id: string | null; content: string | null; similarity: number }[]
     >`
-      SELECT id, version, root_memory_id,
+      SELECT id, version, root_memory_id, content,
              (1 - (embedding <=> ${`[${vec.join(',')}]`}::vector)) AS similarity
       FROM memory
       WHERE user_id = ${userId}::uuid
@@ -290,6 +290,7 @@ export class MemoryRepository {
     return { id: newMemory.id, is_pinned: newMemory.is_pinned, score, sensitivity: clamp(analysis.sensitivity) };
   }
 
+  // batchIds는 saveMemory 완료 후 생성된 id라 루프 중엔 알 수 없어 별도 단계로 분리됨
   async updateRepetitionStrength(
     tx: Prisma.TransactionClient,
     userId: string,
