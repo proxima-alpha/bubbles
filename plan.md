@@ -69,7 +69,7 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
 ### Frontend
 - **Next.js 14** (App Router)
 - **Tailwind CSS** + shadcn/ui
-- **React Query** (서버 상태 관리)
+- **React Query** + **Axios** (서버 상태 관리 + API 호출)
 
 ### Backend
 - **NestJS** (TypeScript, DI 구조)
@@ -77,6 +77,7 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
 - **PostgreSQL** + **pgvector** 확장 (대화 기록 + 벡터 저장 통합)
 - **Ollama** (로컬 임베딩 모델 서빙 — `nomic-embed-text`)
 - **Python FastAPI 서버** (AgglomerativeClustering 전용, NestJS에서 HTTP 호출)
+- **LLM**: general LLM 연동 (Claude, GPT 등 스위칭 가능, 특정 제공사 종속 없음)
 
 > ChromaDB 미사용: pgvector로 대체하여 Docker 서비스 수를 줄임 (별도 벡터 DB 불필요)
 
@@ -145,36 +146,19 @@ bubbles/
 
 ## 개발 단계
 
+세부 태스크 체크리스트는 `specs/NNN/spec.md`에서 관리한다 (CLAUDE.md 워크플로우 참고). 아래는 Spec별 MVP 범위만 기록.
+
 ### Spec 1 — 기반 세팅
-- [x] (1) Docker Compose 구성 (postgres+pgvector, ollama, clustering, backend, frontend)
-- [x] (2) NestJS 프로젝트 초기화
-- [x] (3) Next.js 프로젝트 초기화
-- [x] (4) DB 설계 및 마이그레이션
-- [x] (5) 인증 구현 (JWT)
-- [x] (6) LLM 연동 (Ollama 로컬 모델 우선 — `exaone3.5:2.4b`, 외부 API는 Spec 4에서)
-- [x] (7) 기본 Chat UI (model null이면 모델 선택 화면 조건부 표시)
-- [x] (8) Profile UI (본인 정보 변경, model 변경, API 키 변경)
+Docker Compose(postgres+pgvector, ollama, clustering, backend, frontend), NestJS/Next.js 초기화, DB 설계, JWT 인증, Ollama 로컬 모델 연동, 기본 Chat UI, Profile UI.
 
 ### Spec 2 — RAG 파이프라인
-- [ ] (1) LLM 응답 구조화 포맷 정의 (message)
-- [ ] (2) Ollama 임베딩 연동 (message 저장 시 embedding 생성)
-- [ ] (3) 스케줄러: 미처리 messages → exchange 페어링 → 벡터 클러스터링 (AgglomerativeClustering)
-- [ ] (4) 스케줄러: 클러스터 ↔ 기존 knowledge memories 유사도 비교 → merge or 신규 생성 + LLM으로 키워드/점수 산정
-- [ ] (5) 스케줄러: 승격 조건 만족하는 knowledge memories + 기존 main memory → LLM → main memory 재생성
-- [ ] (6) 컨텍스트 조립: main memory + top N knowledge memories (RAG) + 최근 messages
-- [ ] (7) knowledge memory 목록 UI
+message 임베딩 연동, 스케줄러 기반 exchange 클러스터링 → knowledge memory 생성/merge (키워드+점수 산정), 승격 조건 기반 main memory 재생성, 컨텍스트 조립(main + top N knowledge + 최근 messages), knowledge memory 목록/상세/history UI.
 
 ### Spec 3 — 지식 관리 & 키워드
-- [ ] (1) 키워드 대시보드 UI
-- [ ] (2) knowledge memory 수동 편집 / 고정(pin) / 삭제 UI
-- [ ] (3) main memory 조회 및 수동 편집 UI
-- [ ] (4) md import / export
-- [ ] (5) 망각 옵션 (score 기반 knowledge memory 자동 정리)
+키워드 대시보드, knowledge memory 수동 편집/고정(pin)/삭제, main memory 조회/수동 편집, md import/export, 망각 옵션(score 기반 자동 정리).
 
 ### Spec 4 — 배포 준비
-- [ ] (1) 외부 LLM API 연동 (Claude + GPT 스위칭, license_key 기반)
-- [ ] (2) 설정 페이지 (모델 선택, API key 관리)
-- [ ] (3) 배포 설정
+외부 LLM API 연동(Claude + GPT 스위칭, license_key 기반), 설정 페이지(모델 선택, API key 관리), 배포 설정.
 
 ---
 

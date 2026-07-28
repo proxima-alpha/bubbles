@@ -1,25 +1,7 @@
 # CLAUDE.md — Bubbles 프로젝트
 
 Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
-
----
-
-## 프로젝트 개요
-
-개인용 AI 채팅 웹앱. RAG 시스템으로 세션 간 기억을 유지하며, 토큰 절약을 위해 세션은 짧게 끊는다.
-자세한 내용은 `plan.md` 참고.
-
----
-
-## 기술 스택
-
-- **Frontend**: Next.js 14 (App Router), Tailwind CSS, shadcn/ui, React Query, Axios
-- **Backend**: NestJS (TypeScript)
-- **LLM**: general LLM 연동 (Claude, GPT 등 스위칭 가능, 특정 제공사 종속 없음)
-- **ORM**: Prisma
-- **RAG**: pgvector (PostgreSQL 확장), Ollama (`nomic-embed-text`), 직접 구현
-- **Infra**: Docker Compose
-- **구조**: `apps/frontend`, `apps/backend` 단순 폴더 모노레포
+프로젝트 개요/기술 스택 등 프로젝트 내용은 `plan.md` 참고.
 
 ---
 
@@ -65,6 +47,12 @@ Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
 4. **코드 작성** — `/apply` 호출 후에만 코드 작성. 다중 태스크 실행 시 태스크별로 커밋
 5. **테스트** — `/test` 호출로 TDD 사이클 진행 (Red → Green → Refactor)
 6. **검증** — 전체 테스트 통과 확인, 이슈 발견 시 보고
+
+### plan.md vs spec.md
+
+- `plan.md` "개발 단계" — Spec별 **MVP 범위만** 작성 (체크박스 없이 요약 문장/bullet)
+- 세부 태스크 체크리스트는 `specs/NNN/spec.md`에서만 관리
+- 이유: 두 곳에서 체크리스트를 관리하면 진행 상황이 어긋남 (plan.md가 갱신 안 되고 방치되는 문제 발생)
 
 ### Spec 파일 구조
 
