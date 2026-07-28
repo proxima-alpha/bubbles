@@ -176,15 +176,11 @@ export class MemoryRepository {
     return rows[0];
   }
 
-  async findMemoryMessages(memoryId: string): Promise<MessageForBatch[]> {
+  async findMemoryMessages(rootId: string): Promise<MessageForBatch[]> {
     return this.prisma.$queryRaw<MessageForBatch[]>`
-      SELECT id, role, provider, content, terms FROM (
-        SELECT DISTINCT m.id, m.role, m.provider, m.content, m.terms, m.created_at
-        FROM memory_content mc
-        JOIN memory_content__message mcm ON mcm.memory_content_id = mc.id
-        JOIN message m ON m.id = mcm.message_id
-        WHERE mc.memory_id = ${memoryId}::uuid
-      ) t
+      SELECT id, role, provider, content, terms
+      FROM message
+      WHERE root_memory_id = ${rootId}::uuid
       ORDER BY created_at ASC
     `;
   }
@@ -261,6 +257,9 @@ export class MemoryRepository {
       UPDATE memory SET embedding = ${`[${memCentroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
     `;
 
+    const rootId = newMemory.root_memory_id ?? newMemory.id;
+    const evidencedMessageIds = new Set<string>();
+
     for (const { sentence, messageIds } of validPairs) {
       const mc = await tx.memory_content.create({
         data: { memory_id: newMemory.id, content: sentence },
@@ -268,9 +267,21 @@ export class MemoryRepository {
       await tx.memory_content__message.createMany({
         data: messageIds.map(mid => ({ memory_content_id: mc.id, message_id: mid })),
       });
+      messageIds.forEach(mid => evidencedMessageIds.add(mid));
     }
 
-    for (const kw of (analysis.keywords ?? []).filter(k => k.code && /^[a-z0-9-]+$/.test(k.code))) {
+    if (evidencedMessageIds.size > 0) {
+      await tx.message.updateMany({
+        where: { id: { in: [...evidencedMessageIds] } },
+        data: { root_memory_id: rootId },
+      });
+    }
+
+    const normalizedKeywords = (analysis.keywords ?? [])
+      .map(k => ({ ...k, code: k.code?.toLowerCase() }))
+      .filter(k => k.code && /^[a-z0-9-]+$/.test(k.code));
+
+    for (const kw of normalizedKeywords) {
       await tx.$executeRaw`
         INSERT INTO keyword (code, name) VALUES (${kw.code}, ${kw.name})
         ON CONFLICT (code) DO NOTHING

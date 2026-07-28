@@ -108,7 +108,7 @@ export class SchedulerService {
     const pendingSaves: SaveArgs[] = [];
     for (const group of groups) {
       const existingMessages = group.existingMemory
-        ? await this.memoryRepo.findMemoryMessages(group.existingMemory.id)
+        ? await this.memoryRepo.findMemoryMessages(group.existingMemory.root_memory_id ?? group.existingMemory.id)
         : undefined;
       const analysis = await this.callLlmForAnalysis(userId, group.messages, group.existingMemory?.content ?? undefined);
       if (analysis.contents.length > 0) {
@@ -166,7 +166,13 @@ export class SchedulerService {
       allContentEmbeddings.length;
 
     const existingMemory = await this.memoryRepo.findSimilarMemory(userId, clusterCentroid, mergeMaxSimilarity);
-    const isMerge = existingMemory !== null && avgSimilarity >= mergeAvgSimilarity;
+    let isMerge = existingMemory !== null && avgSimilarity >= mergeAvgSimilarity;
+    if (isMerge) {
+      const existingMessages = await this.memoryRepo.findMemoryMessages(
+        existingMemory!.root_memory_id ?? existingMemory!.id,
+      );
+      if (existingMessages.length === 0) isMerge = false;
+    }
 
     return {
       messages: exchanges.flatMap(e => e.messages),
@@ -207,7 +213,7 @@ export class SchedulerService {
      · 기존 기억과 명백히 충돌하거나 변경된 경우에만 수정한다.
      · 현재 대화와 관련이 없다는 이유로 기존 기억을 삭제하지 않는다.
 - contents[i]: 추출·정제된 핵심 정보 한 문장
-- keywords: contents의 핵심 주제. contents 전체를 관통하는 중심 개념만.
+- keywords: 최종 완성된 contents의 핵심 주제. contents 전체를 관통하는 중심 개념만.
     · 부차적으로 언급된 세부 기법·예시는 키워드로 만들지 않는다
 - keywords[i].code: 영문 소문자·숫자·하이픈 (예: rag-technique)
 - keywords[i].name: 키워드명, 한글 선호, 괄호 등 부가설명 하지않음
