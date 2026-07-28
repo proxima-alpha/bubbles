@@ -50,8 +50,8 @@ export class SchedulerService {
 
   @Cron('* * * * *')
   async checkAndRun() {
-    const threshold = this.config.get<number>('SCHEDULER_MESSAGE_THRESHOLD', 5);
-    const intervalHours = this.config.get<number>('SCHEDULER_BATCH_INTERVAL_HOURS', 24);
+    const threshold = Number(this.config.get('SCHEDULER_MESSAGE_THRESHOLD', 5));
+    const intervalHours = Number(this.config.get('SCHEDULER_BATCH_INTERVAL_HOURS', 24));
 
     const overThreshold = await this.memoryRepo.findUsersOverThreshold(threshold);
     const overInterval = await this.memoryRepo.findUsersOverInterval(intervalHours);
@@ -155,8 +155,8 @@ export class SchedulerService {
   }
 
   private async prepareGroup(userId: string, exchanges: Exchange[]): Promise<GroupArgs> {
-    const mergeMaxSimilarity = this.config.get<number>('MERGE_MAX_SIMILARITY', 0.8);
-    const mergeAvgSimilarity = this.config.get<number>('MERGE_AVG_SIMILARITY', 0.7);
+    const mergeMaxSimilarity = Number(this.config.get('MERGE_MAX_SIMILARITY', 0.8));
+    const mergeAvgSimilarity = Number(this.config.get('MERGE_AVG_SIMILARITY', 0.7));
 
     const allContentEmbeddings = exchanges.flatMap(e => e.contentEmbeddings);
     const clusterCentroid = centroid(allContentEmbeddings);
@@ -284,8 +284,8 @@ ${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
 
   private async runClustering(vectors: number[][], ids: string[]) {
     const url = this.config.get<string>('CLUSTERING_URL', 'http://clustering:8000');
-    const minClusterSize = this.config.get<number>('CLUSTERING_MIN_CLUSTER_SIZE', 2);
-    const similarityThreshold = this.config.get<number>('CLUSTERING_SIMILARITY_THRESHOLD', 0.95);
+    const minClusterSize = Number(this.config.get('CLUSTERING_MIN_CLUSTER_SIZE', 2));
+    const similarityThreshold = Number(this.config.get('CLUSTERING_SIMILARITY_THRESHOLD', 0.95));
     const res = await fetch(`${url}/cluster`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -296,8 +296,8 @@ ${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
   }
 
   async updateMainMemory(userId: string, batchResults: BatchMemoryResult[]) {
-    const scoreThreshold = this.config.get<number>('PROMOTION_SCORE_THRESHOLD', 0.9);
-    const sensitivityThreshold = this.config.get<number>('PROMOTION_SENSITIVITY_THRESHOLD', 0.3);
+    const scoreThreshold = Number(this.config.get('PROMOTION_SCORE_THRESHOLD', 0.9));
+    const sensitivityThreshold = Number(this.config.get('PROMOTION_SENSITIVITY_THRESHOLD', 0.3));
 
     const newlyPromoted = batchResults.filter(m =>
       m.is_pinned || (m.score > scoreThreshold && m.sensitivity <= sensitivityThreshold),

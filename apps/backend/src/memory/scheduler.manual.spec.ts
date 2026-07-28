@@ -42,7 +42,19 @@ describe('SchedulerService (manual)', () => {
       }
       const results = await service.executeMemorization(userId);
       console.log(`[${userId}] processed ${results.length} memories`, results);
-      await service.updateMainMemory(userId, results);
+    },
+  );
+
+  it.each(target_ids.length ? target_ids : ['__skip__'])(
+    'updateMainMemory for user %s',
+    async (userId) => {
+      if (userId === '__skip__') {
+        console.log('target_ids가 비어있습니다. user_id를 넣고 다시 실행하세요.');
+        return;
+      }
+      // gate만 통과시키는 더미 — 실제 대상은 updateMainMemory 내부에서 DB의 승격 조건으로 다시 조회함
+      await service.updateMainMemory(userId, [{ id: '', is_pinned: true, score: 1, sensitivity: 0 }]);
+      console.log(`[${userId}] updateMainMemory done`);
     },
   );
 });

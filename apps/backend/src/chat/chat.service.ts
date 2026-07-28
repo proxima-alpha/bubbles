@@ -36,7 +36,7 @@ export class ChatService {
       return;
     }
 
-    const topK = this.config.get<number>('RAG_TOP_K', 5);
+    const topK = Number(this.config.get('RAG_TOP_K', 5));
     const [mainMemory, topKnowledge] = await Promise.all([
       this.memoryService.getActiveMainMemory(userId),
       this.memoryService.getTopKnowledge(userId, queryEmbedding, topK),

@@ -190,7 +190,7 @@ export class MemoryRepository {
     userId: string,
     { messages, memCentroid, analysis, existingMemory }: SaveArgs,
   ): Promise<BatchMemoryResult> {
-    const maxClusterSize = this.config.get<number>('MAX_CLUSTER_SIZE', 50);
+    const maxClusterSize = Number(this.config.get('MAX_CLUSTER_SIZE', 50));
     const clusterSizeScore = Math.min(1, Math.log(1 + messages.length) / Math.log(1 + maxClusterSize));
     const importance = clamp(clamp(analysis.importance) + 0.15 * clusterSizeScore);
 
@@ -201,7 +201,7 @@ export class MemoryRepository {
       0.1 * clamp(analysis.llm_confidence_hint),
     );
 
-    const recency = Math.exp(-0 / this.config.get<number>('RECENCY_DECAY_FACTOR', 30));
+    const recency = Math.exp(-0 / Number(this.config.get('RECENCY_DECAY_FACTOR', 30)));
 
     const score = clamp(
       0.25 * importance +
@@ -309,7 +309,7 @@ export class MemoryRepository {
     batchIds: string[],
   ) {
     if (contentEmbeddings.length === 0) return;
-    const similarityThreshold = this.config.get<number>('REPETITION_SIMILARITY_THRESHOLD', 0.6);
+    const similarityThreshold = Number(this.config.get('REPETITION_SIMILARITY_THRESHOLD', 0.6));
 
     const existingMemories = await tx.$queryRaw<{ id: string; embedding: number[] }[]>`
       SELECT id, embedding::float4[] AS embedding
