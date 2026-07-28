@@ -29,6 +29,12 @@ await this.prisma.$transaction(async (tx) => {
 
 PK → ID FK → Code FK → 일반 필드 → `is_xxx` boolean → `xxx_at` (추가) → `created_at` / `updated_at` / `deleted_at`
 
+## Soft Delete
+
+- `deleted_at` 컬럼이 있는 테이블은 soft delete — row를 지우지 않고 `deleted_at = now()`만 세팅
+- 그 테이블을 조회하는 **모든** 쿼리(목록/단건/조인 무관)는 `deleted_at IS NULL` 조건을 명시적으로 추가한다. 다른 플래그(`is_active` 등)가 우연히 같이 걸러주는 경우에도 생략하지 않는다 — 플래그 의미가 나중에 바뀌면 soft delete 필터가 조용히 빠지기 때문
+- 삭제 함수/API는 빈 응답(body 없음)만 반환 — 삭제된 row를 body로 돌려주지 않는다
+
 ## Junction 테이블
 
 - 명명: `aaa__bbb` (더블 언더스코어로 두 테이블명 연결)
