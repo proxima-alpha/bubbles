@@ -639,6 +639,15 @@ export class MemoryRepository {
     });
   }
 
+  async findForgettingCandidates(scoreThreshold: number, staleDays: number) {
+    return this.prisma.$queryRaw<{ user_id: string; id: string }[]>`
+      SELECT user_id, id FROM memory
+      WHERE type = 'knowledge' AND is_active = true AND deleted_at IS NULL
+        AND is_pinned = false AND score < ${scoreThreshold}
+        AND COALESCE(last_referenced_at, created_at) < NOW() - (${staleDays} || ' days')::interval
+    `;
+  }
+
   async deleteKnowledgeMemory(userId: string, id: string) {
     const target = await this.prisma.memory.findFirst({
       where: { id, user_id: userId, type: 'knowledge', deleted_at: null },
