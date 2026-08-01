@@ -96,11 +96,39 @@ function MainMemoryCard() {
   );
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function MemoryPage() {
+  const queryClient = useQueryClient();
   const { data: memories = [], isLoading } = useQuery<KnowledgeMemory[]>({
     queryKey: ['knowledge-memories'],
     queryFn: () => api.get('/memory/knowledge').then(r => r.data),
   });
+
+  const importMutation = useMutation({
+    mutationFn: (content: string) => api.post('/memory/import', { content }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['knowledge-memories'] }),
+  });
+
+  const handleExportAll = async () => {
+    const res = await api.get('/memory/export', { responseType: 'blob' });
+    downloadBlob(res.data, 'memory-export.md');
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const content = await file.text();
+    importMutation.mutate(content);
+    e.target.value = '';
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
@@ -109,7 +137,18 @@ export default function MemoryPage() {
       <main className="flex-1 px-4 py-6 max-w-2xl mx-auto w-full">
         <MainMemoryCard />
 
-        <h2 className="text-base font-semibold mb-4">지식 메모리</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold">지식 메모리</h2>
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-gray-600 hover:text-black cursor-pointer">
+              가져오기
+              <input type="file" accept=".md" onChange={handleImportFile} className="hidden" />
+            </label>
+            <button onClick={handleExportAll} className="text-xs text-gray-600 hover:text-black">
+              전체 내보내기
+            </button>
+          </div>
+        </div>
 
         {isLoading && (
           <p className="text-center text-gray-400 text-sm">불러오는 중...</p>

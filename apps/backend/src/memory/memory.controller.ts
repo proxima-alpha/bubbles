@@ -1,8 +1,10 @@
-import { Controller, Get, Delete, Patch, Put, Body, Param, UseGuards, Request, HttpCode } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Patch, Put, Body, Param, UseGuards, Request, Response, HttpCode, NotFoundException } from '@nestjs/common';
+import type { Response as ExpressResponse } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { MemoryService } from './memory.service';
 import { UpdateKnowledgeDto } from './dto/update-knowledge.dto';
 import { UpdateMainMemoryDto } from './dto/update-main-memory.dto';
+import { ImportKnowledgeDto } from './dto/import-knowledge.dto';
 
 @Controller('memory')
 @UseGuards(AuthGuard('jwt'))
@@ -67,5 +69,31 @@ export class MemoryController {
   @Put('main')
   updateMainMemory(@Request() req: { user: { id: string } }, @Body() dto: UpdateMainMemoryDto) {
     return this.memoryService.updateMainMemory(req.user.id, dto.summary);
+  }
+
+  @Post('import')
+  importKnowledge(@Request() req: { user: { id: string } }, @Body() dto: ImportKnowledgeDto) {
+    return this.memoryService.importKnowledge(req.user.id, dto.content);
+  }
+
+  @Get('knowledge/:id/export')
+  async exportKnowledgeById(
+    @Request() req: { user: { id: string } },
+    @Param('id') id: string,
+    @Response() res: ExpressResponse,
+  ) {
+    const content = await this.memoryService.exportKnowledgeById(req.user.id, id);
+    if (content === null) throw new NotFoundException();
+    res.setHeader('Content-Type', 'text/markdown');
+    res.setHeader('Content-Disposition', `attachment; filename="memory-${id}.md"`);
+    res.send(content);
+  }
+
+  @Get('export')
+  async exportAllKnowledge(@Request() req: { user: { id: string } }, @Response() res: ExpressResponse) {
+    const content = await this.memoryService.exportAllKnowledge(req.user.id);
+    res.setHeader('Content-Type', 'text/markdown');
+    res.setHeader('Content-Disposition', 'attachment; filename="memory-export.md"');
+    res.send(content);
   }
 }

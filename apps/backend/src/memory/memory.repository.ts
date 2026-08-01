@@ -569,6 +569,76 @@ export class MemoryRepository {
     });
   }
 
+  async importKnowledgeMemory(userId: string, analysis: LlmMemoryAnalysis, content: string, embedding: number[]) {
+    const maxClusterSize = Number(this.config.get('MAX_CLUSTER_SIZE', 50));
+    const clusterSizeScore = Math.min(1, Math.log(2) / Math.log(1 + maxClusterSize)); // cluster_size = 1 (단일 메시지 케이스와 동일 취급)
+    const importance = clamp(clamp(analysis.importance) + 0.15 * clusterSizeScore);
+    const now = new Date();
+
+    const { confirmedScore, score } = computeScore({
+      importance,
+      durability: clamp(analysis.durability),
+      reusefulness: clamp(analysis.reusefulness),
+      explicit_signal: clamp(analysis.explicit_signal),
+      repetition_strength: 0,
+      user_action_score: 0,
+      llm_confidence_hint: clamp(analysis.llm_confidence_hint),
+      sensitivity: clamp(analysis.sensitivity),
+      temporary_penalty: clamp(analysis.temporary_penalty),
+      last_referenced_at: null,
+      created_at: now,
+    }, Number(this.config.get('RECENCY_DECAY_FACTOR', 30)));
+
+    return this.prisma.$transaction(async (tx) => {
+      const newMemory = await tx.memory.create({
+        data: {
+          user_id: userId,
+          type: 'knowledge',
+          history_type: 'uploaded',
+          version: 1,
+          score,
+          scored_at: now,
+          sensitivity: clamp(analysis.sensitivity),
+          importance,
+          durability: clamp(analysis.durability),
+          reusefulness: clamp(analysis.reusefulness),
+          explicit_signal: clamp(analysis.explicit_signal),
+          confirmed_score: confirmedScore,
+          temporary_penalty: clamp(analysis.temporary_penalty),
+          summary: analysis.summary,
+          content,
+        },
+      });
+
+      for (const sentence of analysis.contents) {
+        await tx.memory_content.create({ data: { memory_id: newMemory.id, content: sentence } });
+        // 결정 C: message 근거 연결 없음
+      }
+
+      const normalizedKeywords = (analysis.keywords ?? [])
+        .map(k => ({ ...k, code: k.code?.toLowerCase() }))
+        .filter(k => k.code && /^[a-z0-9-]+$/.test(k.code));
+
+      for (const kw of normalizedKeywords) {
+        await tx.$executeRaw`
+          INSERT INTO keyword (code, name) VALUES (${kw.code}, ${kw.name})
+          ON CONFLICT (code) DO NOTHING
+        `;
+        await tx.$executeRaw`
+          INSERT INTO memory__keyword (memory_id, keyword_code)
+          VALUES (${newMemory.id}::uuid, ${kw.code})
+          ON CONFLICT DO NOTHING
+        `;
+      }
+
+      await tx.$executeRaw`
+        UPDATE memory SET embedding = ${`[${embedding.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
+      `;
+
+      return newMemory;
+    });
+  }
+
   async deleteKnowledgeMemory(userId: string, id: string) {
     const target = await this.prisma.memory.findFirst({
       where: { id, user_id: userId, type: 'knowledge', deleted_at: null },

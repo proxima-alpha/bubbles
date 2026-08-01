@@ -63,6 +63,16 @@ export default function MemoryDetailPage({ params }: { params: { id: string } })
     },
   });
 
+  const handleExport = async (id: string) => {
+    const res = await api.get(`/memory/knowledge/${id}/export`, { responseType: 'blob' });
+    const url = URL.createObjectURL(res.data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `memory-${id}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       <header className="border-b bg-white px-4 py-3 flex items-center gap-4">
@@ -116,6 +126,9 @@ export default function MemoryDetailPage({ params }: { params: { id: string } })
                     </div>
 
                     <div className="flex gap-2 pt-2 border-t">
+                      <button onClick={() => handleExport(version.id)} className="text-xs text-gray-600 hover:text-black">
+                        내보내기
+                      </button>
                       {isLatest && (
                         <>
                           <button
