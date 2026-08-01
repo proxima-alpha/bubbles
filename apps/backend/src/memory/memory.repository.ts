@@ -67,6 +67,29 @@ function centroid(vectors: number[][]): number[] {
   return sum.map(x => x / vectors.length);
 }
 
+function computeScore(
+  m: {
+    importance: number; durability: number; reusefulness: number;
+    explicit_signal: number; repetition_strength: number; user_action_score: number; llm_confidence_hint: number;
+    sensitivity: number; temporary_penalty: number;
+    last_referenced_at: Date | null; created_at: Date;
+  },
+  recencyDecayFactor: number,
+): { confirmedScore: number; score: number } {
+  const confirmedScore = clamp(
+    0.4 * m.explicit_signal + 0.3 * m.repetition_strength +
+    0.2 * m.user_action_score + 0.1 * m.llm_confidence_hint,
+  );
+  const days = (Date.now() - (m.last_referenced_at ?? m.created_at).getTime()) / 86400000;
+  const recency = Math.exp(-days / recencyDecayFactor);
+  const score = clamp(
+    0.25 * m.importance + 0.25 * m.durability + 0.20 * m.reusefulness +
+    0.20 * confirmedScore + 0.10 * recency -
+    0.30 * m.sensitivity - 0.30 * m.temporary_penalty,
+  );
+  return { confirmedScore, score };
+}
+
 @Injectable()
 export class MemoryRepository {
   constructor(
@@ -194,25 +217,21 @@ export class MemoryRepository {
     const maxClusterSize = Number(this.config.get('MAX_CLUSTER_SIZE', 50));
     const clusterSizeScore = Math.min(1, Math.log(1 + messages.length) / Math.log(1 + maxClusterSize));
     const importance = clamp(clamp(analysis.importance) + 0.15 * clusterSizeScore);
+    const now = new Date();
 
-    const confirmedScore = clamp(
-      0.4 * clamp(analysis.explicit_signal) +
-      0.3 * 0 +
-      0.2 * 0 +
-      0.1 * clamp(analysis.llm_confidence_hint),
-    );
-
-    const recency = Math.exp(-0 / Number(this.config.get('RECENCY_DECAY_FACTOR', 30)));
-
-    const score = clamp(
-      0.25 * importance +
-      0.25 * clamp(analysis.durability) +
-      0.20 * clamp(analysis.reusefulness) +
-      0.20 * confirmedScore +
-      0.10 * recency -
-      0.30 * clamp(analysis.sensitivity) -
-      0.30 * clamp(analysis.temporary_penalty),
-    );
+    const { confirmedScore, score } = computeScore({
+      importance,
+      durability: clamp(analysis.durability),
+      reusefulness: clamp(analysis.reusefulness),
+      explicit_signal: clamp(analysis.explicit_signal),
+      repetition_strength: 0,
+      user_action_score: 0,
+      llm_confidence_hint: clamp(analysis.llm_confidence_hint),
+      sensitivity: clamp(analysis.sensitivity),
+      temporary_penalty: clamp(analysis.temporary_penalty),
+      last_referenced_at: null,
+      created_at: now,
+    }, Number(this.config.get('RECENCY_DECAY_FACTOR', 30)));
 
     const validPairs = (analysis.contents ?? [])
       .map((sentence, i) => {
@@ -221,8 +240,6 @@ export class MemoryRepository {
         return { sentence, messageIds };
       })
       .filter(p => p.messageIds.length > 0);
-
-    const now = new Date();
 
     if (existingMemory) {
       await tx.memory.update({
@@ -311,9 +328,19 @@ export class MemoryRepository {
   ) {
     if (contentEmbeddings.length === 0) return;
     const similarityThreshold = Number(this.config.get('REPETITION_SIMILARITY_THRESHOLD', 0.6));
+    const recencyDecayFactor = Number(this.config.get('RECENCY_DECAY_FACTOR', 30));
 
-    const existingMemories = await tx.$queryRaw<{ id: string; embedding: number[] }[]>`
-      SELECT id, embedding::float4[] AS embedding
+    const existingMemories = await tx.$queryRaw<{
+      id: string; embedding: number[];
+      importance: number; durability: number; reusefulness: number;
+      explicit_signal: number; repetition_strength: number; user_action_score: number;
+      llm_confidence_hint: number; sensitivity: number; temporary_penalty: number;
+      last_referenced_at: Date | null; created_at: Date;
+    }[]>`
+      SELECT id, embedding::float4[] AS embedding,
+        importance, durability, reusefulness, explicit_signal, repetition_strength,
+        user_action_score, llm_confidence_hint, sensitivity, temporary_penalty,
+        last_referenced_at, created_at
       FROM memory
       WHERE user_id = ${userId}::uuid
         AND type = 'knowledge'
@@ -329,13 +356,18 @@ export class MemoryRepository {
         const sim = cosineSimilarity(emb, memory.embedding);
         if (sim > maxSim) maxSim = sim;
       }
-      if (maxSim >= similarityThreshold) {
-        await tx.$executeRaw`
-          UPDATE memory
-          SET repetition_strength = GREATEST(0, LEAST(1, repetition_strength + ${0.005 * maxSim}))
-          WHERE id = ${memory.id}::uuid
-        `;
-      }
+      if (maxSim < similarityThreshold) continue;
+
+      const repetitionStrength = Math.min(1, Math.max(0, memory.repetition_strength + 0.005 * maxSim));
+      const { confirmedScore, score } = computeScore(
+        { ...memory, repetition_strength: repetitionStrength },
+        recencyDecayFactor,
+      );
+
+      await tx.memory.update({
+        where: { id: memory.id },
+        data: { repetition_strength: repetitionStrength, confirmed_score: confirmedScore, score, scored_at: new Date() },
+      });
     }
   }
 
@@ -570,11 +602,18 @@ export class MemoryRepository {
   }
 
   async applyDecay() {
-    await this.prisma.$executeRaw`
-      UPDATE memory
-      SET repetition_strength = GREATEST(0, LEAST(1, repetition_strength * 0.995))
-      WHERE type = 'knowledge' AND is_active = true AND deleted_at IS NULL
-    `;
+    const recencyDecayFactor = Number(this.config.get('RECENCY_DECAY_FACTOR', 30));
+    const memories = await this.prisma.memory.findMany({
+      where: { type: 'knowledge', is_active: true, deleted_at: null },
+    });
+    for (const m of memories) {
+      const repetitionStrength = Math.min(1, Math.max(0, m.repetition_strength * 0.995));
+      const { confirmedScore, score } = computeScore({ ...m, repetition_strength: repetitionStrength }, recencyDecayFactor);
+      await this.prisma.memory.update({
+        where: { id: m.id },
+        data: { repetition_strength: repetitionStrength, confirmed_score: confirmedScore, score, scored_at: new Date() },
+      });
+    }
   }
 
   async saveMainMemory(
