@@ -167,6 +167,7 @@ export class MemoryRepository {
       WHERE user_id = ${userId}::uuid
         AND type = 'knowledge'
         AND is_active = true
+        AND deleted_at IS NULL
         AND embedding IS NOT NULL
       ORDER BY embedding <=> ${`[${vec.join(',')}]`}::vector
       LIMIT 1
@@ -317,6 +318,7 @@ export class MemoryRepository {
       WHERE user_id = ${userId}::uuid
         AND type = 'knowledge'
         AND is_active = true
+        AND deleted_at IS NULL
         AND embedding IS NOT NULL
         AND id <> ALL(${batchIds}::uuid[])
     `;
@@ -343,6 +345,7 @@ export class MemoryRepository {
         user_id: userId,
         type: 'knowledge',
         is_active: true,
+        deleted_at: null,
         OR: [
           { is_pinned: true },
           { AND: [{ score: { gt: scoreThreshold } }, { sensitivity: { lte: sensitivityThreshold } }] },
@@ -354,14 +357,14 @@ export class MemoryRepository {
 
   async findMainMemory(userId: string) {
     return this.prisma.memory.findFirst({
-      where: { user_id: userId, type: 'main', is_active: true },
+      where: { user_id: userId, type: 'main', is_active: true, deleted_at: null },
       select: { id: true, version: true, summary: true },
     });
   }
 
   async getActiveMainMemory(userId: string): Promise<string | null> {
     const row = await this.prisma.memory.findFirst({
-      where: { user_id: userId, type: 'main', is_active: true },
+      where: { user_id: userId, type: 'main', is_active: true, deleted_at: null },
       select: { summary: true },
     });
     return row?.summary ?? null;
@@ -374,6 +377,7 @@ export class MemoryRepository {
       WHERE user_id = ${userId}::uuid
         AND type = 'knowledge'
         AND is_active = true
+        AND deleted_at IS NULL
         AND embedding IS NOT NULL
         AND summary IS NOT NULL
       ORDER BY embedding <=> ${`[${embedding.join(',')}]`}::vector
@@ -395,7 +399,7 @@ export class MemoryRepository {
 
   async getKnowledgeList(userId: string) {
     return this.prisma.memory.findMany({
-      where: { user_id: userId, type: 'knowledge', is_active: true },
+      where: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
       orderBy: { created_at: 'desc' },
       include: {
         keywords: { include: { keyword: true } },
@@ -406,31 +410,74 @@ export class MemoryRepository {
 
   async findKnowledgeMemory(userId: string, id: string) {
     return this.prisma.memory.findFirst({
-      where: { id, user_id: userId, type: 'knowledge' },
+      where: { id, user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
       include: { keywords: { include: { keyword: true } }, contents: true },
     });
   }
 
   async findMemoryHistory(userId: string, id: string) {
     const target = await this.prisma.memory.findFirst({
-      where: { id, user_id: userId, type: 'knowledge' },
+      where: { id, user_id: userId, type: 'knowledge', deleted_at: null },
       select: { id: true, root_memory_id: true },
     });
     if (!target) return [];
     const rootId = target.root_memory_id ?? target.id;
 
     return this.prisma.memory.findMany({
-      where: { user_id: userId, type: 'knowledge', OR: [{ id: rootId }, { root_memory_id: rootId }] },
+      where: {
+        user_id: userId, type: 'knowledge', deleted_at: null,
+        OR: [{ id: rootId }, { root_memory_id: rootId }],
+      },
       orderBy: { version: 'desc' },
       include: { keywords: { include: { keyword: true } }, contents: true },
     });
+  }
+
+  async deleteKnowledgeMemory(userId: string, id: string) {
+    const target = await this.prisma.memory.findFirst({
+      where: { id, user_id: userId, type: 'knowledge', deleted_at: null },
+      select: { id: true, root_memory_id: true },
+    });
+    if (!target) return null;
+    const rootId = target.root_memory_id ?? target.id;
+
+    const versionIds = (await this.prisma.memory.findMany({
+      where: { user_id: userId, type: 'knowledge', OR: [{ id: rootId }, { root_memory_id: rootId }] },
+      select: { id: true },
+    })).map(v => v.id);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.memory_content__message.deleteMany({ where: { memory_content: { memory_id: { in: versionIds } } } });
+      await tx.memory_content.deleteMany({ where: { memory_id: { in: versionIds } } });
+      await tx.memory__keyword.deleteMany({ where: { memory_id: { in: versionIds } } });
+      await tx.memory.updateMany({
+        where: { id: { in: versionIds } },
+        data: { deleted_at: new Date(), is_active: false, deactivated_at: new Date() },
+      });
+
+      // memory_content__message는 N:M이라 message 하나가 다른(삭제 대상 아닌) memory의
+      // 근거로 여전히 쓰이고 있을 수 있음 — 완전히 퇴출된 message만 root_memory_id를 null로 리셋
+      const candidates = await tx.message.findMany({ where: { root_memory_id: rootId }, select: { id: true } });
+      const stillReferenced = new Set(
+        (await tx.memory_content__message.findMany({
+          where: { message_id: { in: candidates.map(m => m.id) } },
+          select: { message_id: true },
+          distinct: ['message_id'],
+        })).map(r => r.message_id),
+      );
+      const toReset = candidates.map(m => m.id).filter(mid => !stillReferenced.has(mid));
+
+      await tx.message.updateMany({ where: { id: { in: toReset } }, data: { root_memory_id: null } });
+    });
+
+    return { id: target.id };
   }
 
   async applyDecay() {
     await this.prisma.$executeRaw`
       UPDATE memory
       SET repetition_strength = GREATEST(0, LEAST(1, repetition_strength * 0.995))
-      WHERE type = 'knowledge' AND is_active = true
+      WHERE type = 'knowledge' AND is_active = true AND deleted_at IS NULL
     `;
   }
 

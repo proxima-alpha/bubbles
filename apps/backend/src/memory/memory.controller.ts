@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Delete, Param, UseGuards, Request, HttpCode } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { MemoryService } from './memory.service';
 
@@ -25,5 +25,11 @@ export class MemoryController {
   @Get('content/:id/messages')
   getContentMessages(@Request() req: { user: { id: string } }, @Param('id') id: string) {
     return this.memoryService.getContentMessages(req.user.id, id);
+  }
+
+  @Delete('knowledge/:id')
+  @HttpCode(204)
+  deleteKnowledge(@Request() req: { user: { id: string } }, @Param('id') id: string) {
+    return this.memoryService.deleteKnowledge(req.user.id, id);
   }
 }

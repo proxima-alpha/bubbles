@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { MemoryRepository } from './memory.repository';
 
 @Injectable()
@@ -30,6 +30,11 @@ export class MemoryService {
 
   async getContentMessages(userId: string, contentId: string) {
     return this.memoryRepo.findContentMessages(userId, contentId);
+  }
+
+  async deleteKnowledge(userId: string, id: string) {
+    const result = await this.memoryRepo.deleteKnowledgeMemory(userId, id);
+    if (!result) throw new NotFoundException();
   }
 
   private formatKnowledge(m: {
