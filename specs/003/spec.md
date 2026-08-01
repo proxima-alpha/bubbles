@@ -361,11 +361,63 @@ function computeScore(
 
 - `saveMemory`(Spec 2): 기존 인라인 계산을 `computeScore(...)` 호출로 교체 (동작 동일, 리팩토링만)
 - Task 7 import: 같은 함수 재사용
-- `updateRepetitionStrength`(Spec 2, memory.repository.ts): 지금은 `id`/`embedding`만 raw SQL로 조회 후 `repetition_strength`만 raw UPDATE함. `computeScore` 쓰려면 필요한 컬럼(importance, durability, ... last_referenced_at, created_at)까지 같이 SELECT하고, 유사도 조건 통과한 row마다 새 `repetition_strength` 계산 → `computeScore` 호출 → `tx.memory.update`로 `repetition_strength`/`confirmed_score`/`score`/`scored_at` 한 번에 저장 (raw UPDATE 대신 Prisma typed update로 전환)
+- `updateRepetitionStrength`(Spec 2, memory.repository.ts): 지금은 `id`/`embedding`만 raw SQL로 조회 후 `repetition_strength`만 raw UPDATE함. `computeScore` 쓰려면 필요한 컬럼(importance, durability, ... last_referenced_at, created_at)까지 같이 SELECT하고, 유사도 조건 통과한 row마다 새 `repetition_strength` 계산 → `computeScore` 호출 → `tx.memory.update`로 `repetition_strength`/`confirmed_score`/`score`/`scored_at` 한 번에 저장 (raw UPDATE 대신 Prisma typed update로 전환). `deleted_at IS NULL`도 같이 추가:
+
+```typescript
+// memory.repository.ts — updateRepetitionStrength
+async updateRepetitionStrength(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  contentEmbeddings: number[][],
+  batchIds: string[],
+) {
+  if (contentEmbeddings.length === 0) return;
+  const similarityThreshold = Number(this.config.get('REPETITION_SIMILARITY_THRESHOLD', 0.6));
+  const recencyDecayFactor = Number(this.config.get('RECENCY_DECAY_FACTOR', 30));
+
+  const existingMemories = await tx.$queryRaw<{
+    id: string; embedding: number[];
+    importance: number; durability: number; reusefulness: number;
+    explicit_signal: number; repetition_strength: number; user_action_score: number;
+    llm_confidence_hint: number; sensitivity: number; temporary_penalty: number;
+    last_referenced_at: Date | null; created_at: Date;
+  }[]>`
+    SELECT id, embedding::float4[] AS embedding,
+      importance, durability, reusefulness, explicit_signal, repetition_strength,
+      user_action_score, llm_confidence_hint, sensitivity, temporary_penalty,
+      last_referenced_at, created_at
+    FROM memory
+    WHERE user_id = ${userId}::uuid
+      AND type = 'knowledge'
+      AND is_active = true
+      AND deleted_at IS NULL
+      AND embedding IS NOT NULL
+      AND id <> ALL(${batchIds}::uuid[])
+  `;
+
+  for (const memory of existingMemories) {
+    let maxSim = 0;
+    for (const emb of contentEmbeddings) {
+      const sim = cosineSimilarity(emb, memory.embedding);
+      if (sim > maxSim) maxSim = sim;
+    }
+    if (maxSim < similarityThreshold) continue;
+
+    const repetitionStrength = Math.min(1, Math.max(0, memory.repetition_strength + 0.005 * maxSim));
+    const { confirmedScore, score } = computeScore({ ...memory, repetition_strength: repetitionStrength }, recencyDecayFactor);
+
+    await tx.memory.update({
+      where: { id: memory.id },
+      data: { repetition_strength: repetitionStrength, confirmed_score: confirmedScore, score, scored_at: new Date() },
+    });
+  }
+}
+```
+
 - `decay.scheduler.ts`/`applyDecay`(Spec 2): 지금은 `WHERE type='knowledge' AND is_active=true`인 전체 row를 SQL 한 방으로 `repetition_strength *= 0.995` UPDATE함. `computeScore` 쓰려면 row들을 TS로 fetch해서 각각 재계산 후 개별 `update`로 전환 필요 — set-based 1개 UPDATE에서 row-by-row로 바뀜(유저 개인용 토이 프로젝트라 row 수 적어 성능 문제 없다고 판단, **임의 선택 — 데이터 많아지면 재검토**):
 
 ```typescript
-// decay.scheduler.ts 또는 memory.repository.ts의 applyDecay
+// memory.repository.ts — applyDecay (decay.scheduler.ts는 @Cron 래퍼 그대로, 변경 없음)
 async applyDecay() {
   const recencyDecayFactor = Number(this.config.get('RECENCY_DECAY_FACTOR', 30));
   const memories = await this.prisma.memory.findMany({
@@ -415,7 +467,36 @@ async findPromotedMemories(userId: string, scoreThreshold: number, sensitivityTh
 }
 ```
 
-`SchedulerService.updateMainMemory`의 트리거 판단(이번 배치 `batchResults` 중 threshold 넘은 게 있는지)은 그대로 유지 — top-N은 "누구를 LLM 프롬프트에 넣을지" 선정 단계에서만 추가로 적용되는 cap이라 트리거 로직 안 건드려도 됨.
+**`SchedulerService.updateMainMemory`의 트리거 판단(이번 배치 `batchResults` 중 threshold 넘은 게 있는지) 제거** — 원래 이 트리거 방식은 두 가지 문제가 있었음: (1) 트리거한 항목이 정작 `findPromotedMemories`의 top-N에는 안 들 수 있어서 LLM 호출이 낭비될 수 있었고, (2) Task 9로 `updateRepetitionStrength`/`applyDecay`가 기존 memory의 score를 재계산하게 되면서, `saveMemory`를 거치지 않은(=`batchResults`에 안 담기는) 기존 memory가 반복강화로 score가 threshold를 넘어도 트리거가 이걸 놓치는 문제가 새로 생김.
+
+트리거 개념 자체를 없애고 `updateMainMemory`는 매 실행마다 무조건 `findPromotedMemories`(topN+pinned) 결과로 재생성하도록 변경 — `promoted.length === 0`(합성할 knowledge memory가 아직 없는 신규 유저)일 때만 skip:
+
+```typescript
+// scheduler.service.ts
+async updateMainMemory(userId: string) {
+  const scoreThreshold = Number(this.config.get('PROMOTION_SCORE_THRESHOLD', 0.9));
+  const sensitivityThreshold = Number(this.config.get('PROMOTION_SENSITIVITY_THRESHOLD', 0.3));
+
+  const promoted = await this.memoryRepo.findPromotedMemories(userId, scoreThreshold, sensitivityThreshold);
+  if (promoted.length === 0) return;
+
+  const existing = await this.memoryRepo.findMainMemory(userId);
+  const newKnowledge = promoted.map(m => m.summary ?? '').filter(Boolean).join('\n---\n');
+
+  const promptText = existing
+    ? `다음은 사용자에 대해 알려진 정보입니다.\n\n[기존 기억]\n${existing.summary ?? ''}\n\n[새로 추가된 지식]\n${newKnowledge}\n\n위 내용을 통합하여 사용자를 잘 아는 AI가 기억해야 할 핵심 정보를 압축하여 작성하세요.`
+    : `다음은 사용자에 대해 알려진 정보입니다.\n\n[새로 추가된 지식]\n${newKnowledge}\n\n위 내용을 바탕으로 사용자를 잘 아는 AI가 기억해야 할 핵심 정보를 압축하여 작성하세요.`;
+
+  let mainSummary = '';
+  for await (const token of this.modelService.chatStream(userId, [{role: 'user', content: promptText}])) {
+    mainSummary += token;
+  }
+
+  await this.memoryRepo.saveMainMemory(userId, mainSummary, existing);
+}
+```
+
+`executeMemorization` 호출부(`checkAndRun`)에서 `updateMainMemory(user_id, batchResults)` 호출은 제거 — `updateMainMemory`를 message→knowledge 배치와 같은 cron에서 순차 실행할 이유가 없음(독립된 동작). `updateMainMemory`를 실제로 어느 주기로, 어떤 cron에서 돌릴지(별도 스케줄러 분리 + configurable interval)는 이번 Spec 범위 밖 — `todo.md` 참고. 지금 `checkAndRun` 내 이 호출부 자체가 주석처리돼 미작동 상태라 당장 급하지 않음.
 
 ---
 
@@ -424,6 +505,7 @@ async findPromotedMemories(userId: string, scoreThreshold: number, sensitivityTh
 - `apps/backend/prisma/schema.prisma` — `memory.deleted_at` 추가
 - `apps/backend/src/memory/memory.repository.ts` — Task 2~8 메서드 추가, `computeScore` 공유 함수 추가(Task 9), `saveMemory`/`updateRepetitionStrength`/`findPromotedMemories` 수정(Task 9/10) — Spec 2 기존 코드 변경
 - `apps/backend/src/memory/decay.scheduler.ts` — `applyDecay` row-by-row 재계산으로 변경(Task 9) — Spec 2 기존 코드 변경
+- `apps/backend/src/memory/scheduler.service.ts` — `updateMainMemory`에서 `batchResults`/트리거 필터 제거, 매 실행 무조건 재생성으로 변경(Task 10) — Spec 2 기존 코드 변경
 - `apps/backend/src/memory/memory.service.ts` — 위 메서드 각각의 얇은 wrapper + `formatKnowledge` 재사용
 - `apps/backend/src/memory/forgetting.scheduler.ts` — 신규
 - `apps/backend/src/memory/memory.module.ts` — `ForgettingScheduler` 등록
