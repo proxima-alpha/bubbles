@@ -453,6 +453,56 @@ export class MemoryRepository {
     });
   }
 
+  async updateKnowledgeMemory(userId: string, id: string, contents: string[], summary: string) {
+    const existing = await this.prisma.memory.findFirst({
+      where: { id, user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
+    });
+    if (!existing) return null;
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.memory.update({
+        where: { id },
+        data: { is_active: false, deactivated_at: new Date() },
+      });
+
+      const newMemory = await tx.memory.create({
+        data: {
+          user_id: userId,
+          type: 'knowledge',
+          history_type: 'modified',
+          version: existing.version + 1,
+          parent_memory_id: existing.id,
+          root_memory_id: existing.root_memory_id ?? existing.id,
+          is_pinned: existing.is_pinned,
+          content: contents.join('\n'),
+          summary,
+          // score 컴포넌트는 기존 값 그대로 carry (재계산 안 함 — 유저가 내용만 고친 것)
+          score: existing.score, sensitivity: existing.sensitivity, importance: existing.importance,
+          durability: existing.durability, reusefulness: existing.reusefulness,
+          explicit_signal: existing.explicit_signal, repetition_strength: existing.repetition_strength,
+          user_action_score: existing.user_action_score, llm_confidence_hint: existing.llm_confidence_hint,
+          confirmed_score: existing.confirmed_score, temporary_penalty: existing.temporary_penalty,
+          scored_at: existing.scored_at, last_referenced_at: existing.last_referenced_at,
+          reference_count: existing.reference_count,
+        },
+      });
+
+      for (const sentence of contents) {
+        await tx.memory_content.create({ data: { memory_id: newMemory.id, content: sentence } });
+        // 결정 C: message 근거 연결 없음
+      }
+      // keyword는 편집 대상이 아니므로 기존 값 그대로 복사 (안 하면 Spec2에서 고친 것과 같은 유실 버그 재발)
+      await tx.$executeRaw`
+        INSERT INTO memory__keyword (memory_id, keyword_code)
+        SELECT ${newMemory.id}::uuid, keyword_code FROM memory__keyword WHERE memory_id = ${existing.id}::uuid
+        ON CONFLICT DO NOTHING
+      `;
+      await tx.$executeRaw`UPDATE memory SET embedding = (SELECT embedding FROM memory WHERE id = ${existing.id}::uuid) WHERE id = ${newMemory.id}::uuid`;
+
+      return newMemory;
+    });
+  }
+
   async deleteKnowledgeMemory(userId: string, id: string) {
     const target = await this.prisma.memory.findFirst({
       where: { id, user_id: userId, type: 'knowledge', deleted_at: null },

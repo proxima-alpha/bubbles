@@ -32,6 +32,12 @@ export class MemoryService {
     return this.memoryRepo.findContentMessages(userId, contentId);
   }
 
+  async updateKnowledge(userId: string, id: string, contents: string[], summary: string) {
+    const result = await this.memoryRepo.updateKnowledgeMemory(userId, id, contents, summary);
+    if (!result) throw new NotFoundException();
+    return this.getKnowledgeDetail(userId, result.id);
+  }
+
   async deleteKnowledge(userId: string, id: string) {
     const result = await this.memoryRepo.deleteKnowledgeMemory(userId, id);
     if (!result) throw new NotFoundException();
@@ -58,6 +64,7 @@ export class MemoryService {
     version: number;
     is_pinned: boolean;
     created_at: Date;
+    summary: string | null;
   }) {
     return {
       id: m.id,
@@ -66,6 +73,7 @@ export class MemoryService {
       version: m.version,
       isPinned: m.is_pinned,
       createdAt: m.created_at,
+      summary: m.summary,
     };
   }
 }

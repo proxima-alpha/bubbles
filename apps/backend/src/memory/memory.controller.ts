@@ -1,6 +1,7 @@
-import { Controller, Get, Delete, Patch, Param, UseGuards, Request, HttpCode } from '@nestjs/common';
+import { Controller, Get, Delete, Patch, Put, Body, Param, UseGuards, Request, HttpCode } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { MemoryService } from './memory.service';
+import { UpdateKnowledgeDto } from './dto/update-knowledge.dto';
 
 @Controller('memory')
 @UseGuards(AuthGuard('jwt'))
@@ -36,5 +37,14 @@ export class MemoryController {
   @Patch('knowledge/:id/pin')
   togglePin(@Request() req: { user: { id: string } }, @Param('id') id: string) {
     return this.memoryService.togglePin(req.user.id, id);
+  }
+
+  @Put('knowledge/:id')
+  updateKnowledge(
+    @Request() req: { user: { id: string } },
+    @Param('id') id: string,
+    @Body() dto: UpdateKnowledgeDto,
+  ) {
+    return this.memoryService.updateKnowledge(req.user.id, id, dto.contents, dto.summary);
   }
 }
