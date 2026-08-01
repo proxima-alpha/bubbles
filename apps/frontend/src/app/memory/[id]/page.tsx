@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import useEmblaCarousel from 'embla-carousel-react';
 import api from '@/lib/api';
+import { MarkdownContent } from '@/components/markdown-content';
 
 interface Keyword {
   code: string;
@@ -226,9 +227,9 @@ function ContentLine({ content }: { content: MemoryContent }) {
 
   return (
     <div>
-      <button onClick={() => setOpen(v => !v)} className="text-sm text-left hover:underline">
-        {content.content}
-      </button>
+      <div onClick={() => setOpen(v => !v)} className="text-sm cursor-pointer hover:underline">
+        <MarkdownContent content={content.content} />
+      </div>
       {open && (
         <div className="mt-1 ml-3 border-l-2 pl-3 space-y-1 text-xs text-gray-500">
           {isFetching && <p>불러오는 중...</p>}
