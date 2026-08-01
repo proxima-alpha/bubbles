@@ -32,6 +32,15 @@ export class MemoryService {
     return this.memoryRepo.findContentMessages(userId, contentId);
   }
 
+  async getKeywordDashboard(userId: string) {
+    return this.memoryRepo.getKeywordDashboard(userId);
+  }
+
+  async getKnowledgeByKeyword(userId: string, code: string) {
+    const memories = await this.memoryRepo.getKnowledgeByKeyword(userId, code);
+    return memories.map(m => this.formatKnowledge(m));
+  }
+
   async getMainMemory(userId: string) {
     const main = await this.memoryRepo.findMainMemory(userId);
     return { summary: main?.summary ?? null, updatedAt: main?.created_at ?? null };

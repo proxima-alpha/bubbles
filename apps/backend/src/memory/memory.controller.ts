@@ -54,6 +54,16 @@ export class MemoryController {
     return this.memoryService.getMainMemory(req.user.id);
   }
 
+  @Get('keywords')
+  getKeywordDashboard(@Request() req: { user: { id: string } }) {
+    return this.memoryService.getKeywordDashboard(req.user.id);
+  }
+
+  @Get('keywords/:code/memories')
+  getKnowledgeByKeyword(@Request() req: { user: { id: string } }, @Param('code') code: string) {
+    return this.memoryService.getKnowledgeByKeyword(req.user.id, code);
+  }
+
   @Put('main')
   updateMainMemory(@Request() req: { user: { id: string } }, @Body() dto: UpdateMainMemoryDto) {
     return this.memoryService.updateMainMemory(req.user.id, dto.summary);

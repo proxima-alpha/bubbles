@@ -408,6 +408,32 @@ export class MemoryRepository {
     });
   }
 
+  async getKeywordDashboard(userId: string) {
+    return this.prisma.$queryRaw<{ code: string; name: string; frequency: number }[]>`
+      SELECT k.code, k.name, COUNT(*)::int AS frequency
+      FROM memory__keyword mk
+      JOIN keyword k ON k.code = mk.keyword_code
+      JOIN memory m ON m.id = mk.memory_id
+      WHERE m.user_id = ${userId}::uuid AND m.type = 'knowledge' AND m.is_active = true AND m.deleted_at IS NULL
+      GROUP BY k.code, k.name
+      ORDER BY frequency DESC
+    `;
+  }
+
+  async getKnowledgeByKeyword(userId: string, code: string) {
+    return this.prisma.memory.findMany({
+      where: {
+        user_id: userId, type: 'knowledge', is_active: true, deleted_at: null,
+        keywords: { some: { keyword_code: code } },
+      },
+      orderBy: { created_at: 'desc' },
+      include: {
+        keywords: { include: { keyword: true } },
+        contents: true,
+      },
+    });
+  }
+
   async findKnowledgeMemory(userId: string, id: string) {
     return this.prisma.memory.findFirst({
       where: { id, user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
