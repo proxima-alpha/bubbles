@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import api from '@/lib/api';
 import { HeaderNav } from '@/components/header-nav';
+import { MarkdownContent } from '@/components/markdown-content';
 
 interface Keyword {
   code: string;
@@ -87,10 +88,12 @@ function MainMemoryCard() {
             </button>
           </div>
         </div>
+      ) : main?.summary ? (
+        <div className="text-sm text-gray-700">
+          <MarkdownContent content={main.summary} />
+        </div>
       ) : (
-        <p className="text-sm text-gray-700 whitespace-pre-wrap">
-          {main?.summary || <span className="text-gray-400">아직 생성된 메인 메모리가 없습니다.</span>}
-        </p>
+        <p className="text-sm text-gray-400">아직 생성된 메인 메모리가 없습니다.</p>
       )}
     </div>
   );

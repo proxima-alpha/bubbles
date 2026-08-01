@@ -296,7 +296,7 @@ ${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
   }
 
   async updateMainMemory(userId: string) {
-    const scoreThreshold = Number(this.config.get('PROMOTION_SCORE_THRESHOLD', 0.9));
+    const scoreThreshold = Number(this.config.get('PROMOTION_SCORE_THRESHOLD', 0.75));
     const sensitivityThreshold = Number(this.config.get('PROMOTION_SENSITIVITY_THRESHOLD', 0.3));
 
     const promoted = await this.memoryRepo.findPromotedMemories(userId, scoreThreshold, sensitivityThreshold);
@@ -310,10 +310,7 @@ ${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
       ? `다음은 사용자에 대해 알려진 정보입니다.\n\n[기존 기억]\n${existing.summary ?? ''}\n\n[새로 추가된 지식]\n${newKnowledge}\n\n위 내용을 통합하여 사용자를 잘 아는 AI가 기억해야 할 핵심 정보를 압축하여 작성하세요.`
       : `다음은 사용자에 대해 알려진 정보입니다.\n\n[새로 추가된 지식]\n${newKnowledge}\n\n위 내용을 바탕으로 사용자를 잘 아는 AI가 기억해야 할 핵심 정보를 압축하여 작성하세요.`;
 
-    let mainSummary = '';
-    for await (const token of this.modelService.chatStream(userId, [{role: 'user', content: promptText}])) {
-      mainSummary += token;
-    }
+    const mainSummary = await this.modelService.chat(userId, [{role: 'user', content: promptText}]);
 
     await this.memoryRepo.saveMainMemory(userId, mainSummary, existing);
   }

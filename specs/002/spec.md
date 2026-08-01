@@ -273,7 +273,7 @@ MERGE_AVG_SIMILARITY=0.7            # 클러스터 내부 평균 similarity 임�
 REPETITION_SIMILARITY_THRESHOLD=0.6 # repetition_strength 갱신 대상 최소 similarity
 
 # Memory 승격 조건
-PROMOTION_SCORE_THRESHOLD=0.9       # main memory 승격 score 임계값
+PROMOTION_SCORE_THRESHOLD=0.75       # main memory 승격 score 임계값
 PROMOTION_SENSITIVITY_THRESHOLD=0.3 # main memory 승격 sensitivity 임계값
 ```
 

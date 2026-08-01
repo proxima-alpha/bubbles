@@ -44,12 +44,12 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
     `cluster_size_score = min(1, log(1+cluster_size) / log(1+MAX_CLUSTER_SIZE))`
     `importance = clamp(importance + 0.15 * cluster_size_score, 0, 1)`
 - **confirmed**: LLM이 단독으로 부여하는 정적 점수가 아닌 누적 계산값
-  - `0.4 * explicit_signal + 0.3 * repetition_strength + 0.2 * user_action_score + 0.1 * llm_confidence_hint`
+  - `0.5 * explicit_signal + 0.35 * repetition_strength + 0.15 * llm_confidence_hint`
   - `explicit_signal`: 사용자 발화의 확정성 ("~로 정했어" → 높음, "~할까?" → 낮음)
   - `repetition_strength`: 유사 memory 반복 등장 강도 (float, 0~1). 매 배치 similarity 누적, 매일 감쇠 (`*=0.995`)
-  - `user_action_score`: pin → 매우 높음, 직접 수정 → 높음, 삭제 → 제외
   - `llm_confidence_hint`: knowledge memory 생성 시 LLM이 보조적으로 제공하는 신뢰도
-  - DB에 `explicit_signal`, `repetition_strength`, `user_action_score`, `llm_confidence_hint`, `confirmed_score` 분리 저장. `repetition_strength`는 배치마다 점진 갱신(재계산 없이 누적), 나머지는 배치 시 재계산
+  - DB에 `explicit_signal`, `repetition_strength`, `llm_confidence_hint`, `confirmed_score` 분리 저장. `repetition_strength`는 배치마다 점진 갱신(재계산 없이 누적), 나머지는 배치 시 재계산
+  - (`user_action_score`는 폐기 — pin은 별도 필드로 이미 승격 체크를 우회하고, "원인(유저 행동)"과 "결과(점수 반영 시점)"가 비동기로 분리돼 있어 추적이 어려워 score 공식에서 제외)
 
 ### 3. 키워드 대시보드
 - knowledge memory 생성/merge 시 LLM이 추출한 키워드 사용

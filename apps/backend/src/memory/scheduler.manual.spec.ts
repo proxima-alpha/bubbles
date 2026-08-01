@@ -15,7 +15,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 
 const target_ids: string[] = ['c4425f73-5f1c-4d24-8f92-fd074d88167e'];
 
-describe('SchedulerService (manual)', () => {
+describe('SchedulerService.executeMemorization (manual)', () => {
   let service: SchedulerService;
 
   jest.setTimeout(0);
@@ -44,6 +44,25 @@ describe('SchedulerService (manual)', () => {
       console.log(`[${userId}] processed ${results.length} memories`, results);
     },
   );
+});
+
+describe('SchedulerService.updateMainMemory (manual)', () => {
+  let service: SchedulerService;
+
+  jest.setTimeout(0);
+
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true }),
+        PrismaModule,
+        ModelModule,
+      ],
+      providers: [MemoryRepository, SchedulerService],
+    }).compile();
+
+    service = module.get(SchedulerService);
+  });
 
   it.each(target_ids.length ? target_ids : ['__skip__'])(
     'updateMainMemory for user %s',

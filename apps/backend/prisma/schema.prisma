@@ -141,7 +141,6 @@ model memory {
   reusefulness          Float     @default(0)
   explicit_signal       Float     @default(0)
   repetition_strength   Float     @default(0)
-  user_action_score     Float     @default(0)
   llm_confidence_hint   Float     @default(0)
   confirmed_score       Float     @default(0)
   temporary_penalty     Float     @default(0)

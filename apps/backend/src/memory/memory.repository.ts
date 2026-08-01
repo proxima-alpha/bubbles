@@ -70,15 +70,14 @@ function centroid(vectors: number[][]): number[] {
 function computeScore(
   m: {
     importance: number; durability: number; reusefulness: number;
-    explicit_signal: number; repetition_strength: number; user_action_score: number; llm_confidence_hint: number;
+    explicit_signal: number; repetition_strength: number; llm_confidence_hint: number;
     sensitivity: number; temporary_penalty: number;
     last_referenced_at: Date | null; created_at: Date;
   },
   recencyDecayFactor: number,
 ): { confirmedScore: number; score: number } {
   const confirmedScore = clamp(
-    0.4 * m.explicit_signal + 0.3 * m.repetition_strength +
-    0.2 * m.user_action_score + 0.1 * m.llm_confidence_hint,
+    0.5 * m.explicit_signal + 0.35 * m.repetition_strength + 0.15 * m.llm_confidence_hint,
   );
   const days = (Date.now() - (m.last_referenced_at ?? m.created_at).getTime()) / 86400000;
   const recency = Math.exp(-days / recencyDecayFactor);
@@ -225,7 +224,6 @@ export class MemoryRepository {
       reusefulness: clamp(analysis.reusefulness),
       explicit_signal: clamp(analysis.explicit_signal),
       repetition_strength: 0,
-      user_action_score: 0,
       llm_confidence_hint: clamp(analysis.llm_confidence_hint),
       sensitivity: clamp(analysis.sensitivity),
       temporary_penalty: clamp(analysis.temporary_penalty),
@@ -333,13 +331,13 @@ export class MemoryRepository {
     const existingMemories = await tx.$queryRaw<{
       id: string; embedding: number[];
       importance: number; durability: number; reusefulness: number;
-      explicit_signal: number; repetition_strength: number; user_action_score: number;
+      explicit_signal: number; repetition_strength: number;
       llm_confidence_hint: number; sensitivity: number; temporary_penalty: number;
       last_referenced_at: Date | null; created_at: Date;
     }[]>`
       SELECT id, embedding::float4[] AS embedding,
         importance, durability, reusefulness, explicit_signal, repetition_strength,
-        user_action_score, llm_confidence_hint, sensitivity, temporary_penalty,
+        llm_confidence_hint, sensitivity, temporary_penalty,
         last_referenced_at, created_at
       FROM memory
       WHERE user_id = ${userId}::uuid
@@ -546,7 +544,7 @@ export class MemoryRepository {
           score: existing.score, sensitivity: existing.sensitivity, importance: existing.importance,
           durability: existing.durability, reusefulness: existing.reusefulness,
           explicit_signal: existing.explicit_signal, repetition_strength: existing.repetition_strength,
-          user_action_score: existing.user_action_score, llm_confidence_hint: existing.llm_confidence_hint,
+          llm_confidence_hint: existing.llm_confidence_hint,
           confirmed_score: existing.confirmed_score, temporary_penalty: existing.temporary_penalty,
           scored_at: existing.scored_at, last_referenced_at: existing.last_referenced_at,
           reference_count: existing.reference_count,
@@ -581,7 +579,6 @@ export class MemoryRepository {
       reusefulness: clamp(analysis.reusefulness),
       explicit_signal: clamp(analysis.explicit_signal),
       repetition_strength: 0,
-      user_action_score: 0,
       llm_confidence_hint: clamp(analysis.llm_confidence_hint),
       sensitivity: clamp(analysis.sensitivity),
       temporary_penalty: clamp(analysis.temporary_penalty),
