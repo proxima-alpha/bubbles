@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MemoryRepository } from './memory.repository';
 
 @Injectable()
@@ -35,6 +35,20 @@ export class MemoryService {
   async deleteKnowledge(userId: string, id: string) {
     const result = await this.memoryRepo.deleteKnowledgeMemory(userId, id);
     if (!result) throw new NotFoundException();
+  }
+
+  async togglePin(userId: string, id: string) {
+    let result;
+    try {
+      result = await this.memoryRepo.togglePin(userId, id);
+    } catch (e) {
+      if (e instanceof Error && e.message === 'PIN_LIMIT_EXCEEDED') {
+        throw new BadRequestException('PIN_LIMIT_EXCEEDED');
+      }
+      throw e;
+    }
+    if (!result) throw new NotFoundException();
+    return { id: result.id, isPinned: result.is_pinned };
   }
 
   private formatKnowledge(m: {

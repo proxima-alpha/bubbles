@@ -433,6 +433,26 @@ export class MemoryRepository {
     });
   }
 
+  async togglePin(userId: string, id: string) {
+    const memory = await this.prisma.memory.findFirst({
+      where: { id, user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
+    });
+    if (!memory) return null;
+
+    if (!memory.is_pinned) {
+      const maxPinned = Number(this.config.get('PIN_MAX_COUNT', 20));
+      const pinnedCount = await this.prisma.memory.count({
+        where: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: true },
+      });
+      if (pinnedCount >= maxPinned) throw new Error('PIN_LIMIT_EXCEEDED');
+    }
+
+    return this.prisma.memory.update({
+      where: { id },
+      data: { is_pinned: !memory.is_pinned },
+    });
+  }
+
   async deleteKnowledgeMemory(userId: string, id: string) {
     const target = await this.prisma.memory.findFirst({
       where: { id, user_id: userId, type: 'knowledge', deleted_at: null },
