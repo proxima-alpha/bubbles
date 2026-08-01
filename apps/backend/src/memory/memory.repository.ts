@@ -327,6 +327,7 @@ export class MemoryRepository {
     if (contentEmbeddings.length === 0) return;
     const similarityThreshold = Number(this.config.get('REPETITION_SIMILARITY_THRESHOLD', 0.6));
     const recencyDecayFactor = Number(this.config.get('RECENCY_DECAY_FACTOR', 30));
+    const growthRate = Number(this.config.get('REPETITION_GROWTH_RATE', 0.1)); // 임의 선택 — 반복 10회 내외로 repetition_strength 포화되도록 잡음, 근거 없음
 
     const existingMemories = await tx.$queryRaw<{
       id: string; embedding: number[];
@@ -356,7 +357,7 @@ export class MemoryRepository {
       }
       if (maxSim < similarityThreshold) continue;
 
-      const repetitionStrength = Math.min(1, Math.max(0, memory.repetition_strength + 0.005 * maxSim));
+      const repetitionStrength = Math.min(1, Math.max(0, memory.repetition_strength + growthRate * maxSim));
       const { confirmedScore, score } = computeScore(
         { ...memory, repetition_strength: repetitionStrength },
         recencyDecayFactor,
