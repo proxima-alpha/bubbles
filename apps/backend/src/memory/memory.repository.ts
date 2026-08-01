@@ -372,19 +372,27 @@ export class MemoryRepository {
   }
 
   async findPromotedMemories(userId: string, scoreThreshold: number, sensitivityThreshold: number) {
-    return this.prisma.memory.findMany({
+    const totalActive = await this.prisma.memory.count({
+      where: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
+    });
+    const topN = Math.max(3, Math.ceil(Math.log2(totalActive + 1))); // 임의 선택 — 근거 없음, 최소 3 보장
+
+    const ranked = await this.prisma.memory.findMany({
       where: {
-        user_id: userId,
-        type: 'knowledge',
-        is_active: true,
-        deleted_at: null,
-        OR: [
-          { is_pinned: true },
-          { AND: [{ score: { gt: scoreThreshold } }, { sensitivity: { lte: sensitivityThreshold } }] },
-        ],
+        user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: false,
+        score: { gt: scoreThreshold }, sensitivity: { lte: sensitivityThreshold },
       },
+      orderBy: { score: 'desc' },
+      take: topN,
       select: { summary: true },
     });
+
+    const pinned = await this.prisma.memory.findMany({
+      where: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: true },
+      select: { summary: true },
+    });
+
+    return [...ranked, ...pinned];
   }
 
   async findMainMemory(userId: string) {

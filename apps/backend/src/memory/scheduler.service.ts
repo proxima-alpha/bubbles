@@ -60,8 +60,7 @@ export class SchedulerService {
 
     // for (const user_id of targetIds) {
     //   try {
-    //     const batchResults = await this.executeMemorization(user_id);
-    //     await this.updateMainMemory(user_id, batchResults);
+    //     await this.executeMemorization(user_id);
     //     await this.prisma.schedule.upsert({
     //       where: { user_id_type: { user_id, type: 'memory_batch' } },
     //       update: { updated_at: new Date() },
@@ -71,6 +70,7 @@ export class SchedulerService {
     //     console.error(`batch failed for user ${user_id}`, e);
     //   }
     // }
+    // updateMainMemory는 독립된 스케줄러로 분리 필요(todo.md 참고) — 여기서 순차 호출하지 않음
   }
 
   async executeMemorization(userId: string): Promise<BatchMemoryResult[]> {
@@ -295,16 +295,13 @@ ${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
     return res.json();
   }
 
-  async updateMainMemory(userId: string, batchResults: BatchMemoryResult[]) {
+  async updateMainMemory(userId: string) {
     const scoreThreshold = Number(this.config.get('PROMOTION_SCORE_THRESHOLD', 0.9));
     const sensitivityThreshold = Number(this.config.get('PROMOTION_SENSITIVITY_THRESHOLD', 0.3));
 
-    const newlyPromoted = batchResults.filter(m =>
-      m.is_pinned || (m.score > scoreThreshold && m.sensitivity <= sensitivityThreshold),
-    );
-    if (newlyPromoted.length === 0) return;
-
     const promoted = await this.memoryRepo.findPromotedMemories(userId, scoreThreshold, sensitivityThreshold);
+    if (promoted.length === 0) return;
+
     const existing = await this.memoryRepo.findMainMemory(userId);
 
     const newKnowledge = promoted.map(m => m.summary ?? '').filter(Boolean).join('\n---\n');
