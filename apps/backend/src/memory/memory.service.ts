@@ -32,6 +32,17 @@ export class MemoryService {
     return this.memoryRepo.findContentMessages(userId, contentId);
   }
 
+  async getMainMemory(userId: string) {
+    const main = await this.memoryRepo.findMainMemory(userId);
+    return { summary: main?.summary ?? null, updatedAt: main?.created_at ?? null };
+  }
+
+  async updateMainMemory(userId: string, summary: string) {
+    const existing = await this.memoryRepo.findMainMemory(userId);
+    await this.memoryRepo.saveMainMemory(userId, summary, existing, 'modified');
+    return this.getMainMemory(userId);
+  }
+
   async updateKnowledge(userId: string, id: string, contents: string[], summary: string) {
     const result = await this.memoryRepo.updateKnowledgeMemory(userId, id, contents, summary);
     if (!result) throw new NotFoundException();

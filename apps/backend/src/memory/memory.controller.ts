@@ -2,6 +2,7 @@ import { Controller, Get, Delete, Patch, Put, Body, Param, UseGuards, Request, H
 import { AuthGuard } from '@nestjs/passport';
 import { MemoryService } from './memory.service';
 import { UpdateKnowledgeDto } from './dto/update-knowledge.dto';
+import { UpdateMainMemoryDto } from './dto/update-main-memory.dto';
 
 @Controller('memory')
 @UseGuards(AuthGuard('jwt'))
@@ -46,5 +47,15 @@ export class MemoryController {
     @Body() dto: UpdateKnowledgeDto,
   ) {
     return this.memoryService.updateKnowledge(req.user.id, id, dto.contents, dto.summary);
+  }
+
+  @Get('main')
+  getMainMemory(@Request() req: { user: { id: string } }) {
+    return this.memoryService.getMainMemory(req.user.id);
+  }
+
+  @Put('main')
+  updateMainMemory(@Request() req: { user: { id: string } }, @Body() dto: UpdateMainMemoryDto) {
+    return this.memoryService.updateMainMemory(req.user.id, dto.summary);
   }
 }

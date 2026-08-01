@@ -1,6 +1,7 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import api from '@/lib/api';
 import { HeaderNav } from '@/components/header-nav';
@@ -19,6 +20,82 @@ interface KnowledgeMemory {
   createdAt: string;
 }
 
+interface MainMemory {
+  summary: string | null;
+  updatedAt: string | null;
+}
+
+function MainMemoryCard() {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [summary, setSummary] = useState('');
+
+  const { data: main, isLoading } = useQuery<MainMemory>({
+    queryKey: ['main-memory'],
+    queryFn: () => api.get('/memory/main').then(r => r.data),
+  });
+
+  useEffect(() => {
+    if (main) setSummary(main.summary ?? '');
+  }, [main]);
+
+  const updateMutation = useMutation({
+    mutationFn: (summary: string) => api.put('/memory/main', { summary }),
+    onSuccess: () => {
+      setEditing(false);
+      queryClient.invalidateQueries({ queryKey: ['main-memory'] });
+    },
+  });
+
+  if (isLoading) return null;
+
+  return (
+    <div className="bg-white border rounded-xl p-4 mb-6">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-semibold">메인 메모리</h2>
+        {!editing && (
+          <button onClick={() => setEditing(true)} className="text-xs text-gray-600 hover:text-black">
+            편집
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="space-y-2">
+          <textarea
+            value={summary}
+            onChange={e => setSummary(e.target.value)}
+            rows={5}
+            className="w-full border rounded px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-black"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => updateMutation.mutate(summary)}
+              disabled={updateMutation.isPending}
+              className="bg-black text-white rounded px-3 py-1.5 text-xs disabled:opacity-50"
+            >
+              저장
+            </button>
+            <button
+              onClick={() => {
+                setEditing(false);
+                setSummary(main?.summary ?? '');
+              }}
+              className="text-xs text-gray-600 hover:text-black"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-gray-700 whitespace-pre-wrap">
+          {main?.summary || <span className="text-gray-400">아직 생성된 메인 메모리가 없습니다.</span>}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function MemoryPage() {
   const { data: memories = [], isLoading } = useQuery<KnowledgeMemory[]>({
     queryKey: ['knowledge-memories'],
@@ -30,6 +107,8 @@ export default function MemoryPage() {
       <HeaderNav />
 
       <main className="flex-1 px-4 py-6 max-w-2xl mx-auto w-full">
+        <MainMemoryCard />
+
         <h2 className="text-base font-semibold mb-4">지식 메모리</h2>
 
         {isLoading && (

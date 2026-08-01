@@ -358,7 +358,7 @@ export class MemoryRepository {
   async findMainMemory(userId: string) {
     return this.prisma.memory.findFirst({
       where: { user_id: userId, type: 'main', is_active: true, deleted_at: null },
-      select: { id: true, version: true, summary: true },
+      select: { id: true, version: true, summary: true, created_at: true },
     });
   }
 
@@ -555,6 +555,7 @@ export class MemoryRepository {
     userId: string,
     summary: string,
     existing: { id: string; version: number } | null,
+    historyType: 'renewed' | 'modified' = 'renewed',
   ) {
     const now = new Date();
     if (existing) {
@@ -563,11 +564,11 @@ export class MemoryRepository {
         data: { is_active: false, deactivated_at: now },
       });
     }
-    await this.prisma.memory.create({
+    return this.prisma.memory.create({
       data: {
         user_id: userId,
         type: 'main',
-        history_type: 'renewed',
+        history_type: historyType,
         version: existing ? existing.version + 1 : 1,
         parent_memory_id: existing?.id ?? null,
         root_memory_id: null,
