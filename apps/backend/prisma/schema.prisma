@@ -156,6 +156,7 @@ model memory {
   deactivated_at        DateTime? @db.Timestamptz
   created_at            DateTime  @default(now()) @db.Timestamptz
   updated_at            DateTime  @default(now()) @updatedAt @db.Timestamptz
+  deleted_at            DateTime? @db.Timestamptz
 
   user              user        @relation(fields: [user_id], references: [id])
   type_code         common_code  @relation("memory_type",         fields: [type_category, type],                 references: [category_code, code])
