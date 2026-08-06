@@ -7,7 +7,6 @@ import {SystemChatService} from '../model/system-chat.service';
 import {
   BatchMemoryResult,
   Exchange,
-  LlmMemoryAnalysis,
   MemoryRepository,
   MessageForBatch,
   SaveArgs
@@ -101,7 +100,7 @@ export class SchedulerService {
       const existingMessages = group.existingMemory
         ? await this.memoryRepo.findMemoryMessages(group.existingMemory.root_memory_id ?? group.existingMemory.id)
         : undefined;
-      const analysis = await this.callLlmForAnalysis(userId, group.messages, group.existingMemory?.content ?? undefined);
+      const analysis = await this.systemChatService.analyzeConversation(userId, group.messages, group.existingMemory?.content ?? undefined);
       if (analysis.contents.length > 0) {
         const associationMessages = existingMessages ? [...existingMessages, ...group.messages] : group.messages;
         const associations = await this.runAssociationMapping(analysis.contents, associationMessages);
@@ -149,8 +148,13 @@ export class SchedulerService {
     const mergeMaxSimilarity = Number(this.config.get('MERGE_MAX_SIMILARITY', 0.8));
 
     const messages = exchanges.flatMap(e => e.messages);
-    const summary = await this.systemChatService.summarizeForClustering(userId, messages);
-    const clusterCentroid = await this.modelService.embedTextChunked(summary, 'search_document: ');
+    const content = await this.systemChatService.generateMessageContents(userId, messages);
+    if (content.length === 0) {
+      return { messages, memCentroid: [], existingMemory: null };
+    }
+
+    const contentEmbeddings = await this.modelService.embedTextsChunked(content, 'search_document: ');
+    const clusterCentroid = centroid(contentEmbeddings);
 
     const existingMemory = await this.memoryRepo.findSimilarMemory(userId, clusterCentroid, mergeMaxSimilarity);
     let isMerge = existingMemory !== null;
@@ -166,94 +170,6 @@ export class SchedulerService {
       memCentroid: clusterCentroid,
       existingMemory: isMerge ? existingMemory : null,
     };
-  }
-
-  private async callLlmForAnalysis(
-    userId: string,
-    messages: MessageForBatch[],
-    existingContent?: string,
-  ): Promise<LlmMemoryAnalysis> {
-    const formatMessages = (msgs: MessageForBatch[]) =>
-      msgs.map(m => ({
-        [m.role === 'user' ? 'user' : (m.provider ?? 'assistant')]: {
-          text: m.content,
-          message_id: m.role !== 'user' ? m.id : null,
-        },
-      }));
-
-    const inputArray = formatMessages(messages);
-    const existingSection = existingContent ? `[기존 기억]\n${existingContent}\n\n` : '';
-
-    const prompt = `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
-[지침]
--주요 언어를 바꾸지 않는다
-- 분석 절차:
-  1. 응답에서 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출한다
-    · 기억할 가치가 있는 정보가 없으면 contents와 keywords 빈 배열([])로 둔다.
-    . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
-    . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
-    . 한국어 표현이 없는 단어는 영어를 사용한다.
-  2. 추출한 핵심 정보를 문장 단위로 쪼개 각각 contents에 할당한다
-  3. 추출한 정보 중 keywords를 뽑는다
-  4. [기존 기억]이 있으면 이를 최대한 유지하고, 대화에서 새롭게 확인된 핵심 정보만 추가한다.
-     · 중복 내용은 추가하지 않는다.
-     · 기존 기억과 명백히 충돌하거나 변경된 경우에만 수정한다.
-     · 현재 대화와 관련이 없다는 이유로 기존 기억을 삭제하지 않는다.
-- contents[i]: 추출·정제된 핵심 정보 한 문장
-- keywords: 최종 완성된 contents의 핵심 주제. contents 전체를 관통하는 중심 개념만.
-    · 부차적으로 언급된 세부 기법·예시는 키워드로 만들지 않는다
-- keywords[i].code: 영문 소문자·숫자·하이픈 (예: rag-technique)
-- keywords[i].name: 키워드명, 한글 선호, 괄호 등 부가설명 하지않음
-- summary: contents 전체의 짧은 요약
-- 점수(0~1): importance(사용자 이해에 중요할수록 높음), durability(시간이 지나도 유효할수록 높음), reusefulness(재활용 가능성), sensitivity(민감정보일수록 높음), explicit_signal(사용자가 확정적으로 말할수록 높음), llm_confidence_hint(분석 신뢰도), temporary_penalty(장기 기억 가치가 낮을수록 높음 — 날씨·일시적 감정 → 높음, 직업·가치관 → 낮음)
-
-${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
-
-    const schema = {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        keywords: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              code: {type: 'string'},
-              name: {type: 'string'},
-            },
-            required: ['code', 'name'],
-          },
-        },
-        contents: {
-          type: 'array',
-          items: {
-            type: 'string',
-          },
-        },
-        summary: {type: 'string'},
-        importance: {type: 'number'},
-        durability: {type: 'number'},
-        reusefulness: {type: 'number'},
-        sensitivity: {type: 'number'},
-        explicit_signal: {type: 'number'},
-        llm_confidence_hint: {type: 'number'},
-        temporary_penalty: {type: 'number'},
-      },
-      required: [
-        'keywords', 'contents', 'summary',
-        'importance', 'durability', 'reusefulness', 'sensitivity',
-        'explicit_signal', 'llm_confidence_hint', 'temporary_penalty',
-      ]
-    };
-    const fullContent = await this.modelService.chat(userId, [{
-      role: 'user',
-      content: prompt
-    }], {num_predict: 1024}, schema);
-
-    const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('LLM response has no JSON');
-    return JSON.parse(jsonMatch[0]) as LlmMemoryAnalysis;
   }
 
   private async runAssociationMapping(

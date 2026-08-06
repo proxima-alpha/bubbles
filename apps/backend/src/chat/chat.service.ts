@@ -110,7 +110,7 @@ export class ChatService {
   }
 
   async generateMessageContents(userId: string, questionContent: string, answerContent: string, assistantMessageId: string) {
-    const contents = await this.systemChatService.generateMessageContents(userId, questionContent, answerContent);
+    const contents = await this.systemChatService.generateMessageContent(userId, questionContent, answerContent);
     if (contents.length === 0) return;
 
     const embeddings = await this.modelService.embedTextsChunked(contents, 'search_document: ');
