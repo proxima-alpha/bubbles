@@ -3,6 +3,7 @@ import {Cron} from '@nestjs/schedule';
 import {ConfigService} from '@nestjs/config';
 import {PrismaService} from '../prisma/prisma.service';
 import {ModelService} from '../model/model.service';
+import {SystemChatService} from '../model/system-chat.service';
 import {
   BatchMemoryResult,
   Exchange,
@@ -27,23 +28,13 @@ function centroid(vectors: number[][]): number[] {
 }
 
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  const denom = Math.sqrt(na) * Math.sqrt(nb);
-  return denom === 0 ? 0 : dot / denom;
-}
-
 @Injectable()
 export class SchedulerService {
   constructor(
     private prisma: PrismaService,
     private config: ConfigService,
     private modelService: ModelService,
+    private systemChatService: SystemChatService,
     private memoryRepo: MemoryRepository,
   ) {
   }
@@ -156,17 +147,13 @@ export class SchedulerService {
 
   private async prepareGroup(userId: string, exchanges: Exchange[]): Promise<GroupArgs> {
     const mergeMaxSimilarity = Number(this.config.get('MERGE_MAX_SIMILARITY', 0.8));
-    const mergeAvgSimilarity = Number(this.config.get('MERGE_AVG_SIMILARITY', 0.7));
 
-    const allContentEmbeddings = exchanges.flatMap(e => e.contentEmbeddings);
-    const clusterCentroid = centroid(allContentEmbeddings);
-
-    const avgSimilarity =
-      allContentEmbeddings.reduce((acc, v) => acc + cosineSimilarity(v, clusterCentroid), 0) /
-      allContentEmbeddings.length;
+    const messages = exchanges.flatMap(e => e.messages);
+    const summary = await this.systemChatService.summarizeForClustering(userId, messages);
+    const clusterCentroid = await this.modelService.embedTextChunked(summary, 'search_document: ');
 
     const existingMemory = await this.memoryRepo.findSimilarMemory(userId, clusterCentroid, mergeMaxSimilarity);
-    let isMerge = existingMemory !== null && avgSimilarity >= mergeAvgSimilarity;
+    let isMerge = existingMemory !== null;
     if (isMerge) {
       const existingMessages = await this.memoryRepo.findMemoryMessages(
         existingMemory!.root_memory_id ?? existingMemory!.id,
@@ -175,7 +162,7 @@ export class SchedulerService {
     }
 
     return {
-      messages: exchanges.flatMap(e => e.messages),
+      messages,
       memCentroid: clusterCentroid,
       existingMemory: isMerge ? existingMemory : null,
     };
@@ -296,21 +283,17 @@ ${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
   }
 
   async updateMainMemory(userId: string) {
-    const scoreThreshold = Number(this.config.get('PROMOTION_SCORE_THRESHOLD', 0.75));
-    const sensitivityThreshold = Number(this.config.get('PROMOTION_SENSITIVITY_THRESHOLD', 0.3));
+    const scoreThreshold = Number(this.config.get('PROMOTION_SCORE_THRESHOLD', 0.6));
+    const sensitivityThreshold = Number(this.config.get('PROMOTION_SENSITIVITY_THRESHOLD', 0.6));
 
     const promoted = await this.memoryRepo.findPromotedMemories(userId, scoreThreshold, sensitivityThreshold);
     if (promoted.length === 0) return;
 
     const existing = await this.memoryRepo.findMainMemory(userId);
 
-    const newKnowledge = promoted.map(m => m.summary ?? '').filter(Boolean).join('\n---\n');
+    const newKnowledge = promoted.map(m => m.content ?? '').filter(Boolean).join('\n---\n');
 
-    const promptText = existing
-      ? `다음은 사용자에 대해 알려진 정보입니다.\n\n[기존 기억]\n${existing.summary ?? ''}\n\n[새로 추가된 지식]\n${newKnowledge}\n\n위 내용을 통합하여 사용자를 잘 아는 AI가 기억해야 할 핵심 정보를 압축하여 작성하세요.`
-      : `다음은 사용자에 대해 알려진 정보입니다.\n\n[새로 추가된 지식]\n${newKnowledge}\n\n위 내용을 바탕으로 사용자를 잘 아는 AI가 기억해야 할 핵심 정보를 압축하여 작성하세요.`;
-
-    const mainSummary = await this.modelService.chat(userId, [{role: 'user', content: promptText}]);
+    const mainSummary = await this.systemChatService.synthesizeMainMemory(userId, existing?.summary ?? null, newKnowledge);
 
     await this.memoryRepo.saveMainMemory(userId, mainSummary, existing);
   }

@@ -383,12 +383,12 @@ export class MemoryRepository {
       },
       orderBy: { score: 'desc' },
       take: topN,
-      select: { summary: true },
+      select: { content: true },
     });
 
     const pinned = await this.prisma.memory.findMany({
       where: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: true },
-      select: { summary: true },
+      select: { content: true },
     });
 
     return [...ranked, ...pinned];

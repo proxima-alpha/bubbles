@@ -2,6 +2,7 @@ import { Injectable, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { ModelService } from '../model/model.service';
+import { SystemChatService } from '../model/system-chat.service';
 import { MemoryService } from '../memory/memory.service';
 import { ChatRepository } from './chat.repository';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -18,6 +19,7 @@ export class ChatService {
   constructor(
     private chatRepo: ChatRepository,
     private modelService: ModelService,
+    private systemChatService: SystemChatService,
     private memoryService: MemoryService,
     private config: ConfigService,
   ) {}
@@ -108,35 +110,7 @@ export class ChatService {
   }
 
   async generateMessageContents(userId: string, questionContent: string, answerContent: string, assistantMessageId: string) {
-    const raw = await this.modelService.chat(userId, [
-      { role: 'user', content: `[질문]과 [응답]을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
-[지침]
--주요 언어를 바꾸지 않는다 (질문 한 언어 선호)
-- 분석 절차:
-  1. [질문] 및 [응답]의 요약을 짧은 문장들의 문어체로 추출한다
-    · 기억할 가치가 있는 정보가 없으면 contents를 빈 배열([])로 둔다.
-    . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
-    . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
-    . 한국어 표현이 없는 단어는 영어를 사용한다.
-  2. 추출한 요약을 문장 단위로 쪼개 각각 contents에 할당한다
-
-- contents[i]: 추출·정제된 핵심 정보 한 문장
-
-[질문]\n${questionContent}\n\n[응답]\n${answerContent}` },
-    ], { num_predict: 150 }, {
-      type: 'object',
-      properties: {
-        contents: {
-          type: 'array',
-          items: {
-            type: 'string',
-          },
-        },
-      },
-      required: ['contents'],
-    });
-
-    const { contents } = JSON.parse(raw) as { contents: string[] };
+    const contents = await this.systemChatService.generateMessageContents(userId, questionContent, answerContent);
     if (contents.length === 0) return;
 
     const embeddings = await this.modelService.embedTextsChunked(contents, 'search_document: ');

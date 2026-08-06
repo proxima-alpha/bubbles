@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { isAxiosError } from 'axios';
 import api from '@/lib/api';
 
 export default function LoginPage() {
@@ -20,7 +21,11 @@ export default function LoginPage() {
       await api.post('/auth/login', { email, password });
       router.push('/chat');
     } catch (e) {
-      setError('이메일 또는 비밀번호가 올바르지 않습니다.');
+      if (isAxiosError(e) && e.response && e.response.status < 500) {
+        setError('이메일 또는 비밀번호가 올바르지 않습니다.');
+      } else {
+        setError('서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+      }
     } finally {
       setLoading(false);
     }
