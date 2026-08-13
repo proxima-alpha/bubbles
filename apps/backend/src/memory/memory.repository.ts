@@ -199,6 +199,25 @@ export class MemoryRepository {
     return rows[0];
   }
 
+  async logSimilarMemory(userId: string, vec: number[]): Promise<void> {
+    const rows = await this.prisma.$queryRaw<
+      { id: string; version: number; content: string | null; similarity: number }[]
+    >`
+      SELECT id, version, left(content, 60) AS content,
+             (1 - (embedding <=> ${`[${vec.join(',')}]`}::vector)) AS similarity
+      FROM memory
+      WHERE user_id = ${userId}::uuid
+        AND type = 'knowledge'
+        AND is_active = true
+        AND deleted_at IS NULL
+        AND embedding IS NOT NULL
+      ORDER BY embedding <=> ${`[${vec.join(',')}]`}::vector
+      LIMIT 10
+    `;
+
+    console.log('[logSimilarMemory]', JSON.stringify(rows, null, 2));
+  }
+
   async findMemoryMessages(rootId: string): Promise<MessageForBatch[]> {
     return this.prisma.$queryRaw<MessageForBatch[]>`
       SELECT id, role, provider, content, terms
@@ -315,6 +334,13 @@ export class MemoryRepository {
     });
 
     return { id: newMemory.id, is_pinned: newMemory.is_pinned, score, sensitivity: clamp(analysis.sensitivity) };
+  }
+
+  async markProceeded(messageIds: string[]) {
+    await this.prisma.message.updateMany({
+      where: { id: { in: messageIds } },
+      data: { is_proceeded: true },
+    });
   }
 
   // batchIds는 saveMemory 완료 후 생성된 id라 루프 중엔 알 수 없어 별도 단계로 분리됨

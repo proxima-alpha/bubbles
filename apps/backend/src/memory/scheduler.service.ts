@@ -96,6 +96,7 @@ export class SchedulerService {
     const groups = this.consolidateByTarget(rawGroups);
 
     const pendingSaves: SaveArgs[] = [];
+    const skippedMessageIds: string[] = [];
     for (const group of groups) {
       const existingMessages = group.existingMemory
         ? await this.memoryRepo.findMemoryMessages(group.existingMemory.root_memory_id ?? group.existingMemory.id)
@@ -105,7 +106,13 @@ export class SchedulerService {
         const associationMessages = existingMessages ? [...existingMessages, ...group.messages] : group.messages;
         const associations = await this.runAssociationMapping(analysis.contents, associationMessages);
         pendingSaves.push({...group, analysis: {...analysis, associations}});
+      } else {
+        skippedMessageIds.push(...group.messages.map(m => m.id));
       }
+    }
+
+    if (skippedMessageIds.length > 0) {
+      await this.memoryRepo.markProceeded(skippedMessageIds);
     }
 
     const allContentEmbeddings = exchanges.flatMap(e => e.contentEmbeddings);
@@ -145,7 +152,7 @@ export class SchedulerService {
   }
 
   private async prepareGroup(userId: string, exchanges: Exchange[]): Promise<GroupArgs> {
-    const mergeMaxSimilarity = Number(this.config.get('MERGE_MAX_SIMILARITY', 0.8));
+    const mergeMaxSimilarity = Number(this.config.get('MERGE_MAX_SIMILARITY', 0.9));
 
     const messages = exchanges.flatMap(e => e.messages);
     const content = await this.systemChatService.generateMessageContents(userId, messages);
@@ -153,9 +160,10 @@ export class SchedulerService {
       return { messages, memCentroid: [], existingMemory: null };
     }
 
-    const contentEmbeddings = await this.modelService.embedTextsChunked(content, 'search_document: ');
+    const contentEmbeddings = await this.modelService.embedTextsChunked(content, 'search_query: ');
     const clusterCentroid = centroid(contentEmbeddings);
 
+    // await this.memoryRepo.logSimilarMemory(userId, clusterCentroid);
     const existingMemory = await this.memoryRepo.findSimilarMemory(userId, clusterCentroid, mergeMaxSimilarity);
     let isMerge = existingMemory !== null;
     if (isMerge) {
