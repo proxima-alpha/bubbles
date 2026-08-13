@@ -65,7 +65,8 @@ export class ChatService {
     res.write(`data: ${JSON.stringify({ type: 'meta', provider: providerCode, model: modelCode })}\n\n`);
 
     let fullContent = '';
-    const stream = this.modelService.chatStream(userId, messages);
+    const numPredict = Number(this.config.get('CHAT_NUM_PREDICT', 1024));
+    const stream = this.modelService.chatStream(userId, messages, { num_predict: numPredict });
     let tokenCounts = { inputTokens: null as number | null, outputTokens: null as number | null };
 
     while (true) {

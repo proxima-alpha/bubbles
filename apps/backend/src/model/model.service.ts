@@ -28,9 +28,10 @@ export class ModelService {
   async *chatStream(
     userId: string,
     messages: LlmMessage[],
+    options?: { num_predict?: number },
   ): AsyncGenerator<string, { inputTokens: number | null; outputTokens: number | null }, unknown> {
     const { model, baseUrl } = await this.getModelInfo(userId);
-    return yield* this.ollamaProvider.chatStream(baseUrl, model, messages);
+    return yield* this.ollamaProvider.chatStream(baseUrl, model, messages, options);
   }
 
   async embedText(text: string): Promise<number[]> {

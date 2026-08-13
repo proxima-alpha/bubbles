@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { ModelService } from './model.service';
-import { LlmMemoryAnalysis, MessageForBatch } from '../memory/memory.repository';
+import {Injectable} from '@nestjs/common';
+import {ModelService} from './model.service';
+import {LlmMemoryAnalysis, MessageForBatch} from '../memory/memory.repository';
 
 function formatMessages(msgs: MessageForBatch[]) {
   return msgs.map(m => ({
@@ -13,11 +13,11 @@ function formatMessages(msgs: MessageForBatch[]) {
 
 @Injectable()
 export class SystemChatService {
-  constructor(private modelService: ModelService) {}
+  constructor(private modelService: ModelService) {
+  }
 
   async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<string[]> {
-    const raw = await this.modelService.chat(userId, [
-      { role: 'system', content: `[질문]과 [응답]을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
+    const prompt = `[질문]과 [응답]을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
 -주요 언어를 바꾸지 않는다 (질문 한 언어 선호)
 - 분석 절차:
@@ -28,9 +28,14 @@ export class SystemChatService {
     . 한국어 표현이 없는 단어는 영어를 사용한다.
   2. 추출한 요약을 문장 단위로 쪼개 각각 contents에 할당한다
 
-- contents[i]: 추출·정제된 핵심 정보 한 문장` },
-      { role: 'user', content: `[질문]\n${questionContent}\n\n[응답]\n${answerContent}` },
-    ], { num_predict: 150 }, {
+- contents[i]: 추출·정제된 핵심 정보 한 문장`
+
+    const raw = await this.modelService.chat(userId, [
+      {
+        role: 'system', content: prompt
+      },
+      {role: 'user', content: `[질문]\n${questionContent}\n\n[응답]\n${answerContent}`},
+    ], undefined, {
       type: 'object',
       properties: {
         contents: {
@@ -43,28 +48,36 @@ export class SystemChatService {
       required: ['contents'],
     });
 
-    const { contents } = JSON.parse(raw) as { contents: string[] };
+    const {contents} = JSON.parse(raw) as { contents: string[] };
     return contents;
   }
 
   async generateMessageContents(userId: string, messages: MessageForBatch[]): Promise<string[]> {
     const inputArray = formatMessages(messages);
 
-    const raw = await this.modelService.chat(userId, [
-      { role: 'system', content: `[대화] 내용을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
+    const maxContentsCount = Math.floor(messages.length / 2);
+    const prompt = `[대화] 내용을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
 -주요 언어를 바꾸지 않는다
 - 분석 절차:
-  1. 응답에서 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출한다
+  1. 대화에서 사용자에 대해 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출한다
     · 기억할 가치가 있는 정보가 없으면 contents를 빈 배열([])로 둔다.
+    . assistant의 설명·조언·예시는 추출하지 않는다.
     . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
     . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
     . 한국어 표현이 없는 단어는 영어를 사용한다.
   2. 추출한 핵심 정보를 문장 단위로 쪼개 각각 contents에 할당한다
 
-- contents[i]: 추출·정제된 핵심 정보 한 문장` },
-      { role: 'user', content: `[대화]\n${JSON.stringify(inputArray, null, 2)}` },
-    ], { num_predict: 1024 }, {
+- contents[i]: 추출·정제된 핵심 정보 한 문장
+    . contents 의 길이는 최대 ${maxContentsCount} 이다.
+`
+
+    const raw = await this.modelService.chat(userId, [
+      {
+        role: 'system', content: prompt,
+      },
+      {role: 'user', content: `[대화]\n${JSON.stringify(inputArray, null, 2)}`},
+    ], undefined, {
       type: 'object',
       properties: {
         contents: {
@@ -77,7 +90,7 @@ export class SystemChatService {
       required: ['contents'],
     });
 
-    const { contents } = JSON.parse(raw) as { contents: string[] };
+    const {contents} = JSON.parse(raw) as { contents: string[] };
     return contents;
   }
 
@@ -88,12 +101,13 @@ export class SystemChatService {
   ): Promise<LlmMemoryAnalysis> {
     const inputArray = formatMessages(messages);
     const existingSection = existingContent ? `[기존 기억]\n${existingContent}\n\n` : '';
+    const maxContentsCount = existingContent ? existingContent.length + Math.floor(messages.length / 2) : Math.floor(messages.length / 2);
 
     const prompt = `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
 -주요 언어를 바꾸지 않는다
 - 분석 절차:
-  1. 응답에서 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출한다
+  1. 대화에서 사용자에 대해 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출한다
     · 기억할 가치가 있는 정보가 없으면 contents와 keywords 빈 배열([])로 둔다.
     . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
     . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
@@ -105,6 +119,7 @@ export class SystemChatService {
      · 기존 기억과 명백히 충돌하거나 변경된 경우에만 수정한다.
      · 현재 대화와 관련이 없다는 이유로 기존 기억을 삭제하지 않는다.
 - contents[i]: 추출·정제된 핵심 정보 한 문장
+    . contents 의 길이는 최대 ${maxContentsCount} 이다.
 - keywords: 최종 완성된 contents의 핵심 주제. contents 전체를 관통하는 중심 개념만.
     · 부차적으로 언급된 세부 기법·예시는 키워드로 만들지 않는다
 - keywords[i].code: 영문 소문자·숫자·하이픈 (예: rag-technique)
@@ -154,7 +169,7 @@ ${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
     const fullContent = await this.modelService.chat(userId, [{
       role: 'user',
       content: prompt
-    }], {num_predict: 1024}, schema);
+    }], undefined, schema);
 
     const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
@@ -170,8 +185,8 @@ ${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
       : `[새로 추가된 지식]\n${newKnowledge}`;
 
     return this.modelService.chat(userId, [
-      { role: 'system', content: instruction },
-      { role: 'user', content: dataText },
+      {role: 'system', content: instruction},
+      {role: 'user', content: dataText},
     ]);
   }
 
@@ -198,21 +213,21 @@ ${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
             type: 'object',
             additionalProperties: false,
             properties: {
-              code: { type: 'string' },
-              name: { type: 'string' },
+              code: {type: 'string'},
+              name: {type: 'string'},
             },
             required: ['code', 'name'],
           },
         },
-        contents: { type: 'array', items: { type: 'string' } },
-        summary: { type: 'string' },
-        importance: { type: 'number' },
-        durability: { type: 'number' },
-        reusefulness: { type: 'number' },
-        sensitivity: { type: 'number' },
-        explicit_signal: { type: 'number' },
-        llm_confidence_hint: { type: 'number' },
-        temporary_penalty: { type: 'number' },
+        contents: {type: 'array', items: {type: 'string'}},
+        summary: {type: 'string'},
+        importance: {type: 'number'},
+        durability: {type: 'number'},
+        reusefulness: {type: 'number'},
+        sensitivity: {type: 'number'},
+        explicit_signal: {type: 'number'},
+        llm_confidence_hint: {type: 'number'},
+        temporary_penalty: {type: 'number'},
       },
       required: [
         'keywords', 'contents', 'summary',
@@ -222,9 +237,9 @@ ${existingSection}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
     };
 
     const fullContent = await this.modelService.chat(userId, [
-      { role: 'system', content: instruction },
-      { role: 'user', content: `[문서]\n${content}` },
-    ], { num_predict: 1024 }, schema);
+      {role: 'system', content: instruction},
+      {role: 'user', content: `[문서]\n${content}`},
+    ], undefined, schema);
     const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
     return JSON.parse(jsonMatch[0]) as LlmMemoryAnalysis;

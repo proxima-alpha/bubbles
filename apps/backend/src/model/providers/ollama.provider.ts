@@ -56,11 +56,12 @@ export class OllamaProvider {
     baseUrl: string,
     model: string,
     messages: LlmMessage[],
+    options?: { num_predict?: number },
   ): AsyncGenerator<string, { inputTokens: number | null; outputTokens: number | null }, unknown> {
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: true, think: false, enable_thinking: false }),
+      body: JSON.stringify({ model, messages, stream: true, think: false, enable_thinking: false, ...(options && { options }) }),
     });
 
     if (!res.ok || !res.body) throw new InternalServerErrorException(`Ollama error: ${res.status}`);
