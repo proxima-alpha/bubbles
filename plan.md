@@ -183,3 +183,4 @@ message 임베딩 연동, 스케줄러 기반 exchange 클러스터링 → knowl
 - Discord 봇 채널 추가 예정 — 별도 Spec으로 분리. 웹 완성 후 NestJS 백엔드에 Discord 봇 인터페이스만 붙이는 방식
 - knowledge memory가 많이 분화되면 knowledge memory 간 병합 단계가 필요할 수 있음 — 유사도 높은 knowledge memories를 주기적으로 consolidate하는 배치 고려
 - 메시지 임베딩 단위를 메시지 전체 → 청크(문장/의미 단위)로 쪼개면 벡터가 더 뾰족한 개념을 표현해 클러스터링/유사도 검색 품질 향상 기대. 현재 구조(message:embedding = 1:1)에서 message:chunk = 1:N으로의 전환이 필요하므로 별도 Spec으로 검토
+- Ollama 0.23.2에서 `/api/embed`(batch) 임베딩이 배치 내 서로 다른 입력에 동일 벡터를 리턴하는 race condition 있었음(`ollama/ollama#8713`) — 완전 무관한 대화가 knowledge memory로 merge되는 버그의 원인이었음. 0.32.5로 업그레이드해서 해결(2026-08-06)

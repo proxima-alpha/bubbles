@@ -1,5 +1,12 @@
 # TODO
 
+## 즉시 처리 필요 (2026-08-06 Ollama 임베딩 버그 후속)
+
+- [x] DB 정리: `b5a40088-f206-4301-85d2-9b6e6ee1631c`(구직 내용, Ollama race condition 버그로 RAG memory에 잘못 merge된 version 2) 삭제 + `d6dcf2c4-95b4-4175-b184-b3b5940c012b`를 `is_active=true`로 복구
+- [x] job-search 원본 메시지 4개(`72226caf`, `d42e6732`, `5c75e7ce`, `da842acd`) `is_proceeded=false`로 리셋 후 재처리 — 이번엔 별도 memory로 제대로 분리되는지 확인
+- [ ] main memory 승격 테스트 — knowledge memory 2개 이상 확보되면 `scheduler.manual.spec.ts`로 `updateMainMemory` 실행
+- [ ] `scheduler.manual.spec.ts`의 `jest.setTimeout(0)` 버그 수정 — jest-circus에서 0은 "무제한"이 아니라 즉시 timeout으로 처리됨(`test.timeout || state.testTimeout` 에서 0이 falsy가 아니라 그대로 setTimeout(fn, 0)으로 들어감). 충분히 큰 값(예: 600000)으로 교체 필요
+
 ## DB 스키마
 
 - [ ] `message.embedding` 컬럼 drop — message_content.embedding centroid로 대체됨. 테스트 후 마이그레이션.
