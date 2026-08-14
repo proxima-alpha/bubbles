@@ -157,7 +157,7 @@ export class SchedulerService {
     const messages = exchanges.flatMap(e => e.messages);
     const content = await this.systemChatService.generateMessageContents(userId, messages);
     if (content.length === 0) {
-      return { messages, memCentroid: [], existingMemory: null };
+      return {messages, memCentroid: [], existingMemory: null};
     }
 
     const contentEmbeddings = await this.modelService.embedTextsChunked(content, 'search_query: ');
@@ -215,10 +215,14 @@ export class SchedulerService {
 
     const existing = await this.memoryRepo.findMainMemory(userId);
 
-    const newKnowledge = promoted.map(m => m.content ?? '').filter(Boolean).join('\n---\n');
+    const newKnowledges = promoted.filter(m => m.summary).map(m => m.summary ?? '');
 
-    const mainSummary = await this.systemChatService.synthesizeMainMemory(userId, existing?.summary ?? null, newKnowledge);
+    if (!existing) {
+      await this.memoryRepo.saveMainMemory(userId, newKnowledges.join("\n"), existing);
+    } else {
+      const mainSummary = await this.systemChatService.synthesizeMainMemory(userId, existing.summary, newKnowledges);
 
-    await this.memoryRepo.saveMainMemory(userId, mainSummary, existing);
+      await this.memoryRepo.saveMainMemory(userId, mainSummary.join("\n"), existing);
+    }
   }
 }

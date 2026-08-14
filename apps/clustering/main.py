@@ -27,7 +27,7 @@ def cluster(req: ClusterRequest):
     model = AgglomerativeClustering(
         n_clusters=None,
         metric='precomputed',
-        linkage='single', # 하나라도 threshold 를 넘는 경우가 있으면 한 그룹으로 묶음
+        linkage='average',
         distance_threshold=distance_threshold,
     )
     labels = model.fit_predict(distance_matrix)

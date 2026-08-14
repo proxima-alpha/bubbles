@@ -19,4 +19,4 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-SELECT delete_memory_version('ddb6d846-9c86-447d-82eb-4205688d27a8');
+SELECT delete_memory_version('cf4c2f77-4582-4e6d-b448-cada3d05b00d');
