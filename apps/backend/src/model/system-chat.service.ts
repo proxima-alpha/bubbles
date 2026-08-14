@@ -21,8 +21,8 @@ export class SystemChatService {
 [지침]
 -주요 언어를 바꾸지 않는다 (질문 한 언어 선호)
 - 분석 절차:
-  1. [질문] 및 [응답]의 요약을 짧은 문장들의 문어체로 추출한다
-    · 기억할 가치가 있는 정보가 없으면 contents를 빈 배열([])로 둔다.
+  1. [질문] 및 [응답]의 요약을 짧은 문장들의 문어체로 요약한다.
+    · 기억할 가치가 있는 정보가 없으면 contents 를 빈 배열([])로 둔다.
     . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
     . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
     . 한국어 표현이 없는 단어는 영어를 사용한다.
@@ -55,21 +55,20 @@ export class SystemChatService {
   async generateMessageContents(userId: string, messages: MessageForBatch[]): Promise<string[]> {
     const inputArray = formatMessages(messages);
 
-    const maxContentsCount = Math.floor(messages.length / 2);
+    const maxContentsCount = messages.length;
     const prompt = `[대화] 내용을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
 -주요 언어를 바꾸지 않는다
 - 분석 절차:
-  1. 대화에서 사용자에 대해 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출한다
-    · 기억할 가치가 있는 정보가 없으면 contents를 빈 배열([])로 둔다.
-    . assistant의 설명·조언·예시는 추출하지 않는다.
+  1. 대화에서 장기 기억으로 남길 핵심 정보를 짧은 문장들의 최대 ${maxContentsCount}개의 문어체로 요약한다.
+    · 기억할 가치가 있는 정보가 없으면 contents 를 빈 배열([])로 둔다.
     . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
     . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
     . 한국어 표현이 없는 단어는 영어를 사용한다.
   2. 추출한 핵심 정보를 문장 단위로 쪼개 각각 contents에 할당한다
 
 - contents[i]: 추출·정제된 핵심 정보 한 문장
-    . contents 의 길이는 최대 ${maxContentsCount} 이다.
+    . contents 배열의 길이는 최대 ${maxContentsCount}개 이다.
 `
 
     const raw = await this.modelService.chat(userId, [
@@ -101,14 +100,14 @@ export class SystemChatService {
   ): Promise<LlmMemoryAnalysis> {
     const inputArray = formatMessages(messages);
     const existingSection = existingContent ? `[기존 기억]\n${existingContent}\n\n` : '';
-    const maxContentsCount = existingContent ? existingContent.length + Math.floor(messages.length / 2) : Math.floor(messages.length / 2);
+    const maxContentsCount = existingContent ? existingContent.length + messages.length : messages.length;
 
     const prompt = `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
 -주요 언어를 바꾸지 않는다
 - 분석 절차:
-  1. 대화에서 사용자에 대해 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출한다
-    · 기억할 가치가 있는 정보가 없으면 contents와 keywords 빈 배열([])로 둔다.
+  1. 대화에서 장기 기억으로 남길 핵심 정보를 짧은 문장들의 최대 ${maxContentsCount}개의 문어체로 요약한다.
+    · 기억할 가치가 있는 정보가 없으면 contents와 keywords 를 빈 배열([])로 둔다.
     . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
     . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
     . 한국어 표현이 없는 단어는 영어를 사용한다.
@@ -119,7 +118,7 @@ export class SystemChatService {
      · 기존 기억과 명백히 충돌하거나 변경된 경우에만 수정한다.
      · 현재 대화와 관련이 없다는 이유로 기존 기억을 삭제하지 않는다.
 - contents[i]: 추출·정제된 핵심 정보 한 문장
-    . contents 의 길이는 최대 ${maxContentsCount} 이다.
+    . contents 배열의 길이는 최대 ${maxContentsCount}개 이다.
 - keywords: 최종 완성된 contents의 핵심 주제. contents 전체를 관통하는 중심 개념만.
     · 부차적으로 언급된 세부 기법·예시는 키워드로 만들지 않는다
 - keywords[i].code: 영문 소문자·숫자·하이픈 (예: rag-technique)
