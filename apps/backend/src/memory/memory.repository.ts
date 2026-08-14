@@ -84,7 +84,7 @@ function computeScore(
   const score = clamp(
     0.25 * m.importance + 0.25 * m.durability + 0.20 * m.reusefulness +
     0.20 * confirmedScore + 0.10 * recency -
-    0.30 * m.sensitivity - 0.30 * m.temporary_penalty,
+    0.10 * m.sensitivity - 0.30 * m.temporary_penalty, // sensitivity weight 0.30 -> 0.10, 임의 선택 — 근거 없음
   );
   return { confirmedScore, score };
 }
@@ -123,8 +123,8 @@ export class MemoryRepository {
               AND is_proceeded = false
           `
         : Promise.resolve([] as MessageForBatch[]),
-      this.prisma.$queryRaw<{ message_id: string; embedding: number[] }[]>`
-        SELECT message_id, embedding::float4[] AS embedding
+      this.prisma.$queryRaw<{ message_id: string; content: string; embedding: number[] }[]>`
+        SELECT message_id, content, embedding::float4[] AS embedding
         FROM message_content
         WHERE message_id = ANY(${assistantIds}::uuid[])
         ORDER BY message_id, seq ASC
@@ -132,8 +132,11 @@ export class MemoryRepository {
     ]);
 
     const userById = new Map(userRows.map(m => [m.id, m]));
+    const contentTextByMsgId = new Map<string, string[]>();
     const contentEmbeddingsByMsgId = new Map<string, number[][]>();
     for (const row of contentRows) {
+      if (!contentTextByMsgId.has(row.message_id)) contentTextByMsgId.set(row.message_id, []);
+      contentTextByMsgId.get(row.message_id)!.push(row.content);
       if (!contentEmbeddingsByMsgId.has(row.message_id)) contentEmbeddingsByMsgId.set(row.message_id, []);
       contentEmbeddingsByMsgId.get(row.message_id)!.push(row.embedding);
     }
@@ -144,7 +147,8 @@ export class MemoryRepository {
         const parent = userById.get(aMsg.parent_message_id);
         if (parent) messages.push(parent);
       }
-      messages.push({ id: aMsg.id, role: aMsg.role, provider: aMsg.provider, content: aMsg.content, terms: aMsg.terms });
+      const content = (contentTextByMsgId.get(aMsg.id) ?? [aMsg.content]).join(' ');
+      messages.push({ id: aMsg.id, role: aMsg.role, provider: aMsg.provider, content, terms: aMsg.terms });
       return { id: aMsg.id, messages, contentEmbeddings: contentEmbeddingsByMsgId.get(aMsg.id) ?? [] };
     });
   }
@@ -409,12 +413,12 @@ export class MemoryRepository {
       },
       orderBy: { score: 'desc' },
       take: topN,
-      select: { content: true },
+      select: { content: true, summary: true },
     });
 
     const pinned = await this.prisma.memory.findMany({
       where: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: true },
-      select: { content: true },
+      select: { content: true, summary: true },
     });
 
     return [...ranked, ...pinned];
