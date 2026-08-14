@@ -9,7 +9,9 @@ import { SchedulerService } from './scheduler.service';
 import { MemoryRepository } from './memory.repository';
 import { ChatModule } from '../chat/chat.module';
 import { ChatService } from '../chat/chat.service';
-import { ChatRepository } from '../chat/chat.repository';
+import { MessageModule } from '../message/message.module';
+import { MessageRepository } from '../message/message.repository';
+import { UserModule } from '../user/user.module';
 import { ModelModule } from '../model/model.module';
 import { PrismaModule } from '../prisma/prisma.module';
 
@@ -26,6 +28,8 @@ describe('SchedulerService.executeMemorization (manual)', () => {
         ConfigModule.forRoot({ isGlobal: true }),
         PrismaModule,
         ModelModule,
+        MessageModule,
+        UserModule,
       ],
       providers: [MemoryRepository, SchedulerService],
     }).compile();
@@ -57,6 +61,8 @@ describe('SchedulerService.updateMainMemory (manual)', () => {
         ConfigModule.forRoot({ isGlobal: true }),
         PrismaModule,
         ModelModule,
+        MessageModule,
+        UserModule,
       ],
       providers: [MemoryRepository, SchedulerService],
     }).compile();
@@ -79,7 +85,7 @@ describe('SchedulerService.updateMainMemory (manual)', () => {
 
 describe('ChatService.generateMessageContents (manual)', () => {
   let chatService: ChatService;
-  let chatRepo: ChatRepository;
+  let messageRepo: MessageRepository;
 
   jest.setTimeout(0);
 
@@ -94,11 +100,11 @@ describe('ChatService.generateMessageContents (manual)', () => {
     }).compile();
 
     chatService = module.get(ChatService);
-    chatRepo = module.get(ChatRepository);
+    messageRepo = module.get(MessageRepository);
   });
 
   it('message_content가 없는 assistant 메시지를 다시 생성한다', async () => {
-    const messages = await chatRepo.findAssistantMessagesWithoutContent();
+    const messages = await messageRepo.findAssistantMessagesWithoutContent();
     if (messages.length === 0) {
       console.log('message_content가 없는 메시지가 없습니다.');
       return;

@@ -1,6 +1,7 @@
 import {Injectable} from '@nestjs/common';
 import {ModelService} from './model.service';
-import {LlmMemoryAnalysis, MessageForBatch} from '../memory/memory.repository';
+import {LlmMemoryAnalysis} from '../memory/memory.repository';
+import {MessageForBatch} from '../message/message.repository';
 
 function formatMessages(msgs: MessageForBatch[]) {
   return msgs.map(m => ({

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { MessageForBatch, MessageRepository } from '../message/message.repository';
 
 export interface BatchMemoryResult {
   id: string;
@@ -22,20 +23,6 @@ export interface LlmMemoryAnalysis {
   explicit_signal: number;
   llm_confidence_hint: number;
   temporary_penalty: number;
-}
-
-export interface MessageForBatch {
-  id: string;
-  role: string;
-  provider: string | null;
-  content: string;
-  terms: string[];
-}
-
-export interface Exchange {
-  id: string; // assistant message ID
-  messages: MessageForBatch[];
-  contentEmbeddings: number[][]; // message_content embeddings from the assistant message
 }
 
 export interface SaveArgs {
@@ -94,90 +81,8 @@ export class MemoryRepository {
   constructor(
     private prisma: PrismaService,
     private config: ConfigService,
+    private messageRepo: MessageRepository,
   ) {}
-
-  async findUnprocessedExchanges(userId: string): Promise<Exchange[]> {
-    const assistantRows = await this.prisma.$queryRaw<
-      (MessageForBatch & { parent_message_id: string | null })[]
-    >`
-      SELECT m.id, m.role, m.provider, m.content, m.terms, m.parent_message_id
-      FROM message m
-      WHERE m.user_id = ${userId}::uuid
-        AND m.is_proceeded = false
-        AND m.role != 'user'
-        AND EXISTS (SELECT 1 FROM message_content mc WHERE mc.message_id = m.id)
-      ORDER BY m.created_at ASC
-    `;
-
-    if (assistantRows.length === 0) return [];
-
-    const assistantIds = assistantRows.map(m => m.id);
-    const parentIds = assistantRows.map(m => m.parent_message_id).filter((id): id is string => id !== null);
-
-    const [userRows, contentRows] = await Promise.all([
-      parentIds.length > 0
-        ? this.prisma.$queryRaw<MessageForBatch[]>`
-            SELECT id, role, provider, content, terms
-            FROM message
-            WHERE id = ANY(${parentIds}::uuid[])
-              AND is_proceeded = false
-          `
-        : Promise.resolve([] as MessageForBatch[]),
-      this.prisma.$queryRaw<{ message_id: string; content: string; embedding: number[] }[]>`
-        SELECT message_id, content, embedding::float4[] AS embedding
-        FROM message_content
-        WHERE message_id = ANY(${assistantIds}::uuid[])
-        ORDER BY message_id, seq ASC
-      `,
-    ]);
-
-    const userById = new Map(userRows.map(m => [m.id, m]));
-    const contentTextByMsgId = new Map<string, string[]>();
-    const contentEmbeddingsByMsgId = new Map<string, number[][]>();
-    for (const row of contentRows) {
-      if (!contentTextByMsgId.has(row.message_id)) contentTextByMsgId.set(row.message_id, []);
-      contentTextByMsgId.get(row.message_id)!.push(row.content);
-      if (!contentEmbeddingsByMsgId.has(row.message_id)) contentEmbeddingsByMsgId.set(row.message_id, []);
-      contentEmbeddingsByMsgId.get(row.message_id)!.push(row.embedding);
-    }
-
-    return assistantRows.map(aMsg => {
-      const messages: MessageForBatch[] = [];
-      if (aMsg.parent_message_id) {
-        const parent = userById.get(aMsg.parent_message_id);
-        if (parent) messages.push(parent);
-      }
-      const content = (contentTextByMsgId.get(aMsg.id) ?? [aMsg.content]).join(' ');
-      messages.push({ id: aMsg.id, role: aMsg.role, provider: aMsg.provider, content, terms: aMsg.terms });
-      return { id: aMsg.id, messages, contentEmbeddings: contentEmbeddingsByMsgId.get(aMsg.id) ?? [] };
-    });
-  }
-
-  async findUsersOverThreshold(threshold: number): Promise<string[]> {
-    const rows = await this.prisma.$queryRaw<{ user_id: string }[]>`
-      SELECT user_id FROM message m
-      WHERE m.is_proceeded = false
-        AND m.role != 'user'
-        AND EXISTS (SELECT 1 FROM message_content mc WHERE mc.message_id = m.id)
-      GROUP BY user_id
-      HAVING COUNT(*) >= ${threshold}
-    `;
-    return rows.map(r => r.user_id);
-  }
-
-  async findUsersOverInterval(intervalHours: number): Promise<string[]> {
-    const rows = await this.prisma.$queryRaw<{ user_id: string }[]>`
-      SELECT u.id AS user_id FROM "user" u
-      LEFT JOIN schedule s ON s.user_id = u.id AND s.type = 'memory_batch'
-      WHERE (s.id IS NULL OR s.updated_at < NOW() - (${intervalHours} || ' hours')::interval)
-        AND EXISTS (
-          SELECT 1 FROM message m
-          WHERE m.user_id = u.id AND m.is_proceeded = false AND m.role != 'user'
-            AND EXISTS (SELECT 1 FROM message_content mc WHERE mc.message_id = m.id)
-        )
-    `;
-    return rows.map(r => r.user_id);
-  }
 
   async findSimilarMemory(
     userId: string,
@@ -220,15 +125,6 @@ export class MemoryRepository {
     `;
 
     console.log('[logSimilarMemory]', JSON.stringify(rows, null, 2));
-  }
-
-  async findMemoryMessages(rootId: string): Promise<MessageForBatch[]> {
-    return this.prisma.$queryRaw<MessageForBatch[]>`
-      SELECT id, role, provider, content, terms
-      FROM message
-      WHERE root_memory_id = ${rootId}::uuid
-      ORDER BY created_at ASC
-    `;
   }
 
   async saveMemory(
@@ -310,10 +206,7 @@ export class MemoryRepository {
     }
 
     if (evidencedMessageIds.size > 0) {
-      await tx.message.updateMany({
-        where: { id: { in: [...evidencedMessageIds] } },
-        data: { root_memory_id: rootId },
-      });
+      await this.messageRepo.updateRootMemoryId(tx, [...evidencedMessageIds], rootId);
     }
 
     const normalizedKeywords = (analysis.keywords ?? [])
@@ -332,19 +225,9 @@ export class MemoryRepository {
       `;
     }
 
-    await tx.message.updateMany({
-      where: { id: { in: messages.map(m => m.id) } },
-      data: { is_proceeded: true },
-    });
+    await this.messageRepo.markProceededTx(tx, messages.map(m => m.id));
 
     return { id: newMemory.id, is_pinned: newMemory.is_pinned, score, sensitivity: clamp(analysis.sensitivity) };
-  }
-
-  async markProceeded(messageIds: string[]) {
-    await this.prisma.message.updateMany({
-      where: { id: { in: messageIds } },
-      data: { is_proceeded: true },
-    });
   }
 
   // batchIds는 saveMemory 완료 후 생성된 id라 루프 중엔 알 수 없어 별도 단계로 분리됨
@@ -700,17 +583,17 @@ export class MemoryRepository {
 
       // memory_content__message는 N:M이라 message 하나가 다른(삭제 대상 아닌) memory의
       // 근거로 여전히 쓰이고 있을 수 있음 — 완전히 퇴출된 message만 root_memory_id를 null로 리셋
-      const candidates = await tx.message.findMany({ where: { root_memory_id: rootId }, select: { id: true } });
+      const candidateIds = await this.messageRepo.findIdsByRootMemoryId(tx, rootId);
       const stillReferenced = new Set(
         (await tx.memory_content__message.findMany({
-          where: { message_id: { in: candidates.map(m => m.id) } },
+          where: { message_id: { in: candidateIds } },
           select: { message_id: true },
           distinct: ['message_id'],
         })).map(r => r.message_id),
       );
-      const toReset = candidates.map(m => m.id).filter(mid => !stillReferenced.has(mid));
+      const toReset = candidateIds.filter(mid => !stillReferenced.has(mid));
 
-      await tx.message.updateMany({ where: { id: { in: toReset } }, data: { root_memory_id: null } });
+      await this.messageRepo.resetRootMemoryId(tx, toReset);
     });
 
     return { id: target.id };

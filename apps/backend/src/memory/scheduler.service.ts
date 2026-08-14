@@ -4,13 +4,9 @@ import {ConfigService} from '@nestjs/config';
 import {PrismaService} from '../prisma/prisma.service';
 import {ModelService} from '../model/model.service';
 import {SystemChatService} from '../model/system-chat.service';
-import {
-  BatchMemoryResult,
-  Exchange,
-  MemoryRepository,
-  MessageForBatch,
-  SaveArgs
-} from './memory.repository';
+import {BatchMemoryResult, MemoryRepository, SaveArgs} from './memory.repository';
+import {Exchange, MessageForBatch, MessageRepository} from '../message/message.repository';
+import {UserRepository} from '../user/user.repository';
 
 interface GroupArgs {
   messages: MessageForBatch[];
@@ -35,6 +31,8 @@ export class SchedulerService {
     private modelService: ModelService,
     private systemChatService: SystemChatService,
     private memoryRepo: MemoryRepository,
+    private messageRepo: MessageRepository,
+    private userRepo: UserRepository,
   ) {
   }
 
@@ -43,8 +41,8 @@ export class SchedulerService {
     const threshold = Number(this.config.get('SCHEDULER_MESSAGE_THRESHOLD', 5));
     const intervalHours = Number(this.config.get('SCHEDULER_BATCH_INTERVAL_HOURS', 24));
 
-    const overThreshold = await this.memoryRepo.findUsersOverThreshold(threshold);
-    const overInterval = await this.memoryRepo.findUsersOverInterval(intervalHours);
+    const overThreshold = await this.messageRepo.findUsersOverThreshold(threshold);
+    const overInterval = await this.userRepo.findUsersOverInterval(intervalHours);
 
     const targetIds = [...new Set([...overThreshold, ...overInterval])];
 
@@ -64,7 +62,7 @@ export class SchedulerService {
   }
 
   async executeMemorization(userId: string): Promise<BatchMemoryResult[]> {
-    const exchanges = await this.memoryRepo.findUnprocessedExchanges(userId);
+    const exchanges = await this.messageRepo.findUnprocessedExchanges(userId);
     if (exchanges.length === 0) return [];
 
     const rawGroups: GroupArgs[] = [];
@@ -99,7 +97,7 @@ export class SchedulerService {
     const skippedMessageIds: string[] = [];
     for (const group of groups) {
       const existingMessages = group.existingMemory
-        ? await this.memoryRepo.findMemoryMessages(group.existingMemory.root_memory_id ?? group.existingMemory.id)
+        ? await this.messageRepo.findMemoryMessages(group.existingMemory.root_memory_id ?? group.existingMemory.id)
         : undefined;
       const analysis = await this.systemChatService.analyzeConversation(userId, group.messages, group.existingMemory?.content ?? undefined);
       if (analysis.contents.length > 0) {
@@ -112,7 +110,7 @@ export class SchedulerService {
     }
 
     if (skippedMessageIds.length > 0) {
-      await this.memoryRepo.markProceeded(skippedMessageIds);
+      await this.messageRepo.markProceeded(skippedMessageIds);
     }
 
     const allContentEmbeddings = exchanges.flatMap(e => e.contentEmbeddings);
@@ -167,7 +165,7 @@ export class SchedulerService {
     const existingMemory = await this.memoryRepo.findSimilarMemory(userId, clusterCentroid, mergeMaxSimilarity);
     let isMerge = existingMemory !== null;
     if (isMerge) {
-      const existingMessages = await this.memoryRepo.findMemoryMessages(
+      const existingMessages = await this.messageRepo.findMemoryMessages(
         existingMemory!.root_memory_id ?? existingMemory!.id,
       );
       if (existingMessages.length === 0) isMerge = false;

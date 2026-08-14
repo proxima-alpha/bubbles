@@ -4,7 +4,8 @@ import { Response } from 'express';
 import { ModelService } from '../model/model.service';
 import { SystemChatService } from '../model/system-chat.service';
 import { MemoryService } from '../memory/memory.service';
-import { ChatRepository } from './chat.repository';
+import { MessageRepository } from '../message/message.repository';
+import { UserRepository } from '../user/user.repository';
 import { SendMessageDto } from './dto/send-message.dto';
 
 function buildSystemPrompt(mainMemory: string | null, knowledgeItems: string[]): string {
@@ -17,7 +18,8 @@ function buildSystemPrompt(mainMemory: string | null, knowledgeItems: string[]):
 @Injectable()
 export class ChatService {
   constructor(
-    private chatRepo: ChatRepository,
+    private messageRepo: MessageRepository,
+    private userRepo: UserRepository,
     private modelService: ModelService,
     private systemChatService: SystemChatService,
     private memoryService: MemoryService,
@@ -25,10 +27,10 @@ export class ChatService {
   ) {}
 
   async sendMessageStream(userId: string, dto: SendMessageDto, res: Response) {
-    const user = await this.chatRepo.findUserById(userId);
+    const user = await this.userRepo.findById(userId);
     if (!user?.model) throw new ForbiddenException('No model selected');
 
-    const userMsg = await this.chatRepo.createMessage({ user_id: userId, role: 'user', content: dto.content });
+    const userMsg = await this.messageRepo.createMessage({ user_id: userId, role: 'user', content: dto.content });
 
     let queryEmbedding: number[];
     try {
@@ -46,7 +48,7 @@ export class ChatService {
 
     const systemPrompt = buildSystemPrompt(mainMemory, topKnowledge.map(m => m.summary));
 
-    const recentMessages = await this.chatRepo.findRecentMessages(userId, 20);
+    const recentMessages = await this.messageRepo.findRecentMessages(userId, 20);
 
     const messages = [
       { role: 'system' as const, content: systemPrompt },
@@ -79,7 +81,7 @@ export class ChatService {
       res.write(`data: ${JSON.stringify({ token: value })}\n\n`);
     }
 
-    const assistantMsg = await this.chatRepo.createMessage({
+    const assistantMsg = await this.messageRepo.createMessage({
       user_id: userId,
       role: 'assistant',
       provider,
@@ -98,7 +100,7 @@ export class ChatService {
   }
 
   async getHistory(userId: string) {
-    const messages = await this.chatRepo.findHistory(userId);
+    const messages = await this.messageRepo.findHistory(userId);
 
     return messages.map(m => ({
       id: m.id,
@@ -116,7 +118,7 @@ export class ChatService {
 
     const embeddings = await this.modelService.embedTextsChunked(contents, 'search_document: ');
 
-    await this.chatRepo.insertMessageContents(
+    await this.messageRepo.insertMessageContents(
       assistantMessageId,
       contents.map((content, seq) => ({ seq, content, embedding: embeddings[seq] })),
     );
