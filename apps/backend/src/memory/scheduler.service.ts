@@ -73,7 +73,7 @@ export class SchedulerService {
       }
     } else {
       const exchangeTexts = exchanges.map(e => e.messages.map(m => m.content).join('\n'));
-      const vectors = await this.modelService.embedTextsChunked(exchangeTexts, 'clustering: ');
+      const vectors = await this.modelService.embedTexts(exchangeTexts, 'clustering: ');
       const ids = exchanges.map(e => e.id);
 
       const clusterResult = await this.runClustering(vectors, ids);

@@ -76,59 +76,57 @@ export class MessageRepository {
   }
 
   async findUnprocessedExchanges(userId: string): Promise<Exchange[]> {
-    const assistantRows = await this.prisma.$queryRaw<
-      (MessageForBatch & { parent_message_id: string | null })[]
+    const contentRows = await this.prisma.$queryRaw<
+      { message_id: string; role: string; provider: string | null; terms: string[]; parent_message_id: string | null; content: string; embedding: number[] }[]
     >`
-      SELECT m.id, m.role, m.provider, m.content, m.terms, m.parent_message_id
-      FROM message m
+      SELECT m.id AS message_id, m.role, m.provider, m.terms, m.parent_message_id,
+             mc.content, mc.embedding::float4[] AS embedding
+      FROM message_content mc
+      JOIN message m ON m.id = mc.message_id
       WHERE m.user_id = ${userId}::uuid
         AND m.is_proceeded = false
         AND m.role != 'user'
-        AND EXISTS (SELECT 1 FROM message_content mc WHERE mc.message_id = m.id)
-      ORDER BY m.created_at ASC
+      ORDER BY m.created_at ASC, mc.seq ASC
     `;
 
-    if (assistantRows.length === 0) return [];
+    if (contentRows.length === 0) return [];
 
-    const assistantIds = assistantRows.map(m => m.id);
-    const parentIds = assistantRows.map(m => m.parent_message_id).filter((id): id is string => id !== null);
-
-    const [userRows, contentRows] = await Promise.all([
-      parentIds.length > 0
-        ? this.prisma.$queryRaw<MessageForBatch[]>`
-            SELECT id, role, provider, content, terms
-            FROM message
-            WHERE id = ANY(${parentIds}::uuid[])
-              AND is_proceeded = false
-          `
-        : Promise.resolve([] as MessageForBatch[]),
-      this.prisma.$queryRaw<{ message_id: string; content: string; embedding: number[] }[]>`
-        SELECT message_id, content, embedding::float4[] AS embedding
-        FROM message_content
-        WHERE message_id = ANY(${assistantIds}::uuid[])
-        ORDER BY message_id, seq ASC
-      `,
-    ]);
-
-    const userById = new Map(userRows.map(m => [m.id, m]));
+    const assistantOrder: string[] = [];
+    const assistantById = new Map<string, { role: string; provider: string | null; terms: string[]; parent_message_id: string | null }>();
     const contentTextByMsgId = new Map<string, string[]>();
     const contentEmbeddingsByMsgId = new Map<string, number[][]>();
     for (const row of contentRows) {
-      if (!contentTextByMsgId.has(row.message_id)) contentTextByMsgId.set(row.message_id, []);
+      if (!assistantById.has(row.message_id)) {
+        assistantOrder.push(row.message_id);
+        assistantById.set(row.message_id, { role: row.role, provider: row.provider, terms: row.terms, parent_message_id: row.parent_message_id });
+        contentTextByMsgId.set(row.message_id, []);
+        contentEmbeddingsByMsgId.set(row.message_id, []);
+      }
       contentTextByMsgId.get(row.message_id)!.push(row.content);
-      if (!contentEmbeddingsByMsgId.has(row.message_id)) contentEmbeddingsByMsgId.set(row.message_id, []);
       contentEmbeddingsByMsgId.get(row.message_id)!.push(row.embedding);
     }
 
-    return assistantRows.map(aMsg => {
+    const parentIds = [...assistantById.values()].map(m => m.parent_message_id).filter((id): id is string => id !== null);
+    const userRows = parentIds.length > 0
+      ? await this.prisma.$queryRaw<MessageForBatch[]>`
+          SELECT id, role, provider, content, terms
+          FROM message
+          WHERE id = ANY(${parentIds}::uuid[])
+            AND is_proceeded = false
+        `
+      : [];
+    const userById = new Map(userRows.map(m => [m.id, m]));
+
+    return assistantOrder.map(id => {
+      const aMsg = assistantById.get(id)!;
       const messages: MessageForBatch[] = [];
       if (aMsg.parent_message_id) {
         const parent = userById.get(aMsg.parent_message_id);
         if (parent) messages.push(parent);
       }
-      const content = (contentTextByMsgId.get(aMsg.id) ?? [aMsg.content]).join(' ');
-      messages.push({ id: aMsg.id, role: aMsg.role, provider: aMsg.provider, content, terms: aMsg.terms });
-      return { id: aMsg.id, messages, contentEmbeddings: contentEmbeddingsByMsgId.get(aMsg.id) ?? [] };
+      const content = contentTextByMsgId.get(id)!.join('\n');
+      messages.push({ id, role: aMsg.role, provider: aMsg.provider, content, terms: aMsg.terms });
+      return { id, messages, contentEmbeddings: contentEmbeddingsByMsgId.get(id) ?? [] };
     });
   }
 

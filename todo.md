@@ -11,6 +11,10 @@
 
 - [ ] `message.embedding` 컬럼 drop — message_content.embedding centroid로 대체됨. 테스트 후 마이그레이션.
 
+## 다음 작업
+
+- [ ] memorization 시 전체 메시지 대상 clustering 방식 재검토 — 지금은 summary로 clustering 테스트 중, 제대로 된 방법 찾아야 함
+
 ## 향후 Spec 후보
 
 - [ ] 삭제된 knowledge memory의 근거 message 재생성 — Spec 3 결정 B: 삭제 시 재처리 안 함(`root_memory_id`만 NULL). 나중에 유저가 삭제한 memory를 다시 생성하고 싶어할 경우 별도 기능 필요
