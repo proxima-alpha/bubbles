@@ -7,6 +7,10 @@
 - [ ] main memory 승격 테스트 — knowledge memory 2개 이상 확보되면 `scheduler.manual.spec.ts`로 `updateMainMemory` 실행
 - [ ] `scheduler.manual.spec.ts`의 `jest.setTimeout(0)` 버그 수정 — jest-circus에서 0은 "무제한"이 아니라 즉시 timeout으로 처리됨(`test.timeout || state.testTimeout` 에서 0이 falsy가 아니라 그대로 setTimeout(fn, 0)으로 들어감). 충분히 큰 값(예: 600000)으로 교체 필요
 
+## 컨벤션 전체 반영 필요
+
+- [ ] DTO 이름에 `Request`/`Response` 접미사 규칙(CLAUDE.md 추가됨, 2026-08-21) — 기존 controller DTO들 전체 리네임 필요, 아직 반영 안 함
+
 ## DB 스키마
 
 - [ ] `message.embedding` 컬럼 drop — message_content.embedding centroid로 대체됨. 테스트 후 마이그레이션.
@@ -14,6 +18,7 @@
 ## 다음 작업
 
 - [ ] memorization 시 전체 메시지 대상 clustering 방식 재검토 — 지금은 summary로 clustering 테스트 중, 제대로 된 방법 찾아야 함
+  - 아이디어: `prepareGroup`의 `clusterCentroid`를 매번 새로 LLM 요약(`generateMessageContents`) + 재임베딩하는 대신, 이미 `message_content`(chat 실시간 경로에서 LLM이 한 번 처리한 문장들)의 weighted centroid를 `search_query:` prefix로 재사용 — 어차피 raw 대화 아니라 한 번 처리된 content라 "요약 vs 요약" 비교 성립할 수도 있음. 테스트해볼 가치 있음(정확도 비교 필요)
 
 ## 향후 Spec 후보
 

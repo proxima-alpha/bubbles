@@ -113,9 +113,13 @@ describe('ChatService.generateMessageContents (manual)', () => {
     for (const message of messages) {
       await chatService.generateMessageContents(
         message.user_id,
-        message.parent_message!.content,
-        message.content,
-        message.id,
+        {
+          id: message.parent_message!.id,
+          content: message.parent_message!.content,
+        }, {
+          id: message.id,
+          content: message.content,
+        }
       );
       console.log(`[${message.id}] message_content regenerated`);
     }

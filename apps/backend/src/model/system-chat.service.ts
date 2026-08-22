@@ -2,6 +2,12 @@ import {Injectable} from '@nestjs/common';
 import {ModelService} from './model.service';
 import {LlmMemoryAnalysis} from '../memory/memory.repository';
 import {MessageForBatch} from '../message/message.repository';
+import {Exchange} from "../memory/scheduler.service";
+
+interface WeightedLabel {
+  text: string;
+  weight: number;
+}
 
 function formatMessages(msgs: MessageForBatch[]) {
   return msgs.map(m => ({
@@ -12,12 +18,21 @@ function formatMessages(msgs: MessageForBatch[]) {
   }));
 }
 
+function formatExchanges(exchanges: Exchange[][]) {
+  return exchanges.map(array => {
+    return array.map(e => {
+      const title = e.role === 'user' ? '[질문]' : '[응답]'
+      return `${title}\n${e.content}`
+    })
+  })
+}
+
 @Injectable()
 export class SystemChatService {
   constructor(private modelService: ModelService) {
   }
 
-  async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<string[]> {
+  async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<WeightedLabel[]> {
     const systemPrompt = `[질문]과 [응답]을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
 - 주요 언어를 바꾸지 않는다 (질문 한 언어 선호)
@@ -29,8 +44,11 @@ export class SystemChatService {
     . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
     . 한국어 표현이 없는 단어는 영어를 사용한다.
   2. 추출한 요약을 문장 단위로 쪼개 각각 contents에 할당한다
+  3. 각 문장이 전체 주제를 얼마나 대표하는지에 대한 weight를 0~1 사이의 값으로 매긴다.
 
-- contents[i]: 추출·정제된 핵심 정보 한 문장`
+- contents[i].text: 추출·정제된 핵심 정보 한 문장
+- contents[i].weight: 해당 문장이 전체 주제를 얼마나 대표하는지에 대한 점수(0~1)
+`
 
     const dataText = `[질문]\n${questionContent}\n\n[응답]\n${answerContent}`
 
@@ -43,34 +61,41 @@ export class SystemChatService {
         contents: {
           type: 'array',
           items: {
-            type: 'string',
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              text: {type: 'string'},
+              weight: {type: 'number'},
+            },
+            required: ['text', 'weight'],
           },
         },
       },
       required: ['contents'],
     });
 
-    const {contents} = JSON.parse(raw) as { contents: string[] };
+    const {contents} = JSON.parse(raw) as { contents: { text: string; weight: number }[] };
     return contents;
   }
 
-  async generateMessageContents(userId: string, messages: MessageForBatch[]): Promise<string[]> {
-    const inputArray = formatMessages(messages);
+  async generateMessageContents(userId: string, exchanges: Exchange[][]): Promise<WeightedLabel[]> {
+    const inputArray = formatExchanges(exchanges);
 
-    const maxContentsCount = messages.length;
     const systemPrompt = `[대화] 내용을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
-- 주요 언어를 바꾸지 않는다
+- 주요 언어를 바꾸지 않는다 (질문 한 언어 선호)
 - 분석 절차:
-  1. 대화에서 장기 기억으로 남길 핵심 정보를 짧은 문장들의 최대 ${maxContentsCount}개의 문어체로 요약한다.
+1. [질문]과 [응답]의 핵심 정보를 topic label 로만 구성된 짧은 문장으로 추출한다.
     · 기억할 가치가 있는 정보가 없으면 contents 를 빈 배열([])로 둔다.
     . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
+    · 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
     . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
     . 한국어 표현이 없는 단어는 영어를 사용한다.
-  2. 추출한 핵심 정보를 문장 단위로 쪼개 각각 contents에 할당한다
+  2. 추출한 요약을 문장 단위로 쪼개 각각 contents에 할당한다
+  3. 각 문장이 전체 주제를 얼마나 대표하는지에 대한 weight를 0~1 사이의 값으로 매긴다.
 
-- contents[i]: 추출·정제된 핵심 정보 한 문장
-    . contents 배열의 길이는 최대 ${maxContentsCount}개 이다.
+- contents[i].text: 추출·정제된 핵심 정보 한 문장
+- contents[i].weight: 해당 문장이 전체 주제를 얼마나 대표하는지에 대한 점수(0~1)
 `
 
     const dataText = `[대화]\n${JSON.stringify(inputArray, null, 2)}`
@@ -84,24 +109,30 @@ export class SystemChatService {
         contents: {
           type: 'array',
           items: {
-            type: 'string',
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              text: {type: 'string'},
+              weight: {type: 'number'},
+            },
+            required: ['text', 'weight'],
           },
         },
       },
       required: ['contents'],
     });
 
-    const {contents} = JSON.parse(raw) as { contents: string[] };
+    const {contents} = JSON.parse(raw) as { contents: { text: string; weight: number }[] };
     return contents;
   }
 
   async analyzeConversation(
     userId: string,
-    messages: MessageForBatch[],
+    exchanges: Exchange[][],
     existingContent?: string,
   ): Promise<LlmMemoryAnalysis> {
-    const inputArray = formatMessages(messages);
-    const maxContentsCount = existingContent ? existingContent.length + messages.length : messages.length;
+    const inputArray = formatExchanges(exchanges);
+    const maxContentsCount = existingContent ? existingContent.length + exchanges.flat().length : exchanges.flat().length;
 
     const systemPrompt = `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]

@@ -48,7 +48,7 @@ model common_code {
 }
 
 model user {
-  id             String   @id @default(uuid()) @db.Uuid
+  id             String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   model_category String   @default("model") @db.VarChar
   model          String?  @db.VarChar
   email          String   @unique @db.VarChar
@@ -66,7 +66,7 @@ model user {
 }
 
 model license_key {
-  id                String   @id @default(uuid()) @db.Uuid
+  id                String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   user_id           String   @db.Uuid
   provider_category String   @default("provider") @db.VarChar
   provider          String   @db.VarChar
@@ -81,7 +81,7 @@ model license_key {
 }
 
 model message {
-  id                String                     @id @default(uuid()) @db.Uuid
+  id                String                     @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   user_id           String                     @db.Uuid
   role_category     String                     @default("role") @db.VarChar
   role              String                     @db.VarChar
@@ -112,10 +112,11 @@ model message {
 }
 
 model message_content {
-  id         String                      @id @default(uuid()) @db.Uuid
+  id         String                      @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   message_id String                      @db.Uuid
   seq        Int
   content    String                      @db.Text
+  weight     Float                       @default(1)
   embedding  Unsupported("vector(768)")?
   created_at DateTime                    @default(now()) @db.Timestamptz
 
@@ -125,7 +126,7 @@ model message_content {
 }
 
 model memory {
-  id                    String    @id @default(uuid()) @db.Uuid
+  id                    String    @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   user_id               String    @db.Uuid
   root_memory_id        String?   @db.Uuid
   parent_memory_id      String?   @db.Uuid
@@ -171,7 +172,7 @@ model memory {
 }
 
 model memory_content {
-  id         String   @id @default(uuid()) @db.Uuid
+  id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   memory_id  String   @db.Uuid
   content    String   @db.Text
   created_at DateTime @default(now()) @db.Timestamptz
@@ -212,7 +213,7 @@ model memory__keyword {
 }
 
 model schedule {
-  id            String   @id @default(uuid()) @db.Uuid
+  id            String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   user_id       String   @db.Uuid
   type_category String   @default("schedule_type") @db.VarChar
   type          String   @db.VarChar

@@ -10,6 +10,7 @@ Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
 ### 일반
 - 언어는 **TypeScript** (strict mode)
 - 함수/변수명은 **camelCase**, 클래스는 **PascalCase**
+- 함수명은 **동사로 시작** (예: `getAverageCentroid`, `embedTexts`) — 같은 계산 로직이 여러 파일에 흩어지지 않도록, 재사용 가능한 벡터/임베딩 연산은 `model.service.ts`에 모아둘 것
 - 파일명은 **kebab-case**
 - 주석은 꼭 필요한 경우에만 — 코드가 자명하면 생략
 - 새 컴포넌트/모듈 작성 전 `research.md` 확인 — 유사한 동작이 있으면 확장해서 사용
@@ -18,7 +19,9 @@ Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
 - 기능 단위로 Module 분리 (ChatModule, MemoryModule, KeywordModule, ConfigModule)
 - 역할 분리: Controller(라우팅) → Service(비즈니스 로직) → Repository(DB 접근)
 - DTO는 `class-validator`로 유효성 검사
+- Controller에서 쓰이는 DTO는 이름 끝에 용도 명시 — request면 `...Request`, response면 `...Response`
 - 환경변수는 `@nestjs/config`로 관리, 하드코딩 금지
+- raw SQL insert 시 `id` 컬럼에 값 넣지 말 것 — PK는 DB `DEFAULT uuid_generate_v7()`에 맡김 (테이블에 default 없으면 코드에서 채우지 말고 migration으로 default 추가)
 - DB 스키마, 공통코드, REST API/페이지네이션 상세 규칙은 `docs/conventions.md` 참고
 
 ### Frontend (Next.js)

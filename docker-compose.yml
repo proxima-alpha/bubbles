@@ -1,6 +1,7 @@
 services:
   db:
-    image: pgvector/pgvector:pg16
+    build:
+      context: ./db
     environment:
       POSTGRES_USER: bubbles
       POSTGRES_PASSWORD: bubbles

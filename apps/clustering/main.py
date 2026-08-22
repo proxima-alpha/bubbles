@@ -37,7 +37,7 @@ def cluster(req: ClusterRequest):
     model = AgglomerativeClustering(
         n_clusters=None,
         metric='precomputed',
-        linkage='average',
+        linkage='single',
         distance_threshold=distance_threshold,
     )
     labels = model.fit_predict(distance_matrix)

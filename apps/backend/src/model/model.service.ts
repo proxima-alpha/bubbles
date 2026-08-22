@@ -34,11 +34,12 @@ export class ModelService {
     return yield* this.ollamaProvider.chatStream(baseUrl, model, messages, options);
   }
 
-  async embedText(text: string): Promise<number[]> {
+  async embedText(text: string, prefix?: string): Promise<number[]> {
     const baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
+    const prefixed = prefix ? `${prefix}${text}` : text;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        return await this.ollamaProvider.embed(baseUrl, text);
+        return await this.ollamaProvider.embed(baseUrl, prefixed);
       } catch (e) {
         if (attempt === 3) throw e;
         await new Promise(r => setTimeout(r, 500));
@@ -64,7 +65,7 @@ export class ModelService {
   async embedTextChunked(text: string, prefix?: string): Promise<number[]> {
     const chunks = this.chunkText(text);
     const vectors = await this.embedTexts(chunks, prefix);
-    return this.averageVectors(vectors);
+    return this.getAverageCentroid(vectors);
   }
 
   async embedTextsChunked(texts: string[], prefix?: string): Promise<number[][]> {
@@ -74,16 +75,31 @@ export class ModelService {
     return chunkGroups.map(chunks => {
       const vectors = allVectors.slice(offset, offset + chunks.length);
       offset += chunks.length;
-      return this.averageVectors(vectors);
+      return this.getAverageCentroid(vectors);
     });
   }
 
-  private averageVectors(vectors: number[][]): number[] {
+  getAverageCentroid(vectors: number[][]): number[] {
+    if (vectors.length === 0) return [];
     if (vectors.length === 1) return vectors[0];
     const dim = vectors[0].length;
     const sum = new Array<number>(dim).fill(0);
     for (const v of vectors) for (let i = 0; i < dim; i++) sum[i] += v[i];
     return sum.map(x => x / vectors.length);
+  }
+
+  getWeightedCentroid(vectors: number[][], weights: number[]): number[] {
+    if (vectors.length === 0) return [];
+    const dim = vectors[0].length;
+    const sum = new Array<number>(dim).fill(0);
+    let totalWeight = 0;
+    for (let i = 0; i < vectors.length; i++) {
+      const w = weights[i];
+      totalWeight += w;
+      for (let d = 0; d < dim; d++) sum[d] += vectors[i][d] * w;
+    }
+    if (totalWeight === 0) return this.getAverageCentroid(vectors);
+    return sum.map(x => x / totalWeight);
   }
 
   private chunkText(text: string, maxLen = 200): string[] {

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MessageForBatch, MessageRepository } from '../message/message.repository';
+import {Exchange} from "./scheduler.service";
 
 export interface BatchMemoryResult {
   id: string;
@@ -26,8 +27,8 @@ export interface LlmMemoryAnalysis {
 }
 
 export interface SaveArgs {
-  messages: MessageForBatch[];
-  memCentroid: number[];
+  messageIds: string[];
+  centroid: number[];
   analysis: LlmMemoryAnalysis;
   existingMemory: { id: string; version: number; root_memory_id: string | null } | null;
 }
@@ -45,13 +46,6 @@ function cosineSimilarity(a: number[], b: number[]): number {
   }
   const denom = Math.sqrt(na) * Math.sqrt(nb);
   return denom === 0 ? 0 : dot / denom;
-}
-
-function centroid(vectors: number[][]): number[] {
-  const dim = vectors[0].length;
-  const sum = new Array<number>(dim).fill(0);
-  for (const v of vectors) for (let i = 0; i < dim; i++) sum[i] += v[i];
-  return sum.map(x => x / vectors.length);
 }
 
 function computeScore(
@@ -130,10 +124,10 @@ export class MemoryRepository {
   async saveMemory(
     tx: Prisma.TransactionClient,
     userId: string,
-    { messages, memCentroid, analysis, existingMemory }: SaveArgs,
+    { messageIds, centroid, analysis, existingMemory }: SaveArgs,
   ): Promise<BatchMemoryResult> {
     const maxClusterSize = Number(this.config.get('MAX_CLUSTER_SIZE', 50));
-    const clusterSizeScore = Math.min(1, Math.log(1 + messages.length) / Math.log(1 + maxClusterSize));
+    const clusterSizeScore = Math.min(1, Math.log(1 + messageIds.length) / Math.log(1 + maxClusterSize));
     const importance = clamp(clamp(analysis.importance) + 0.15 * clusterSizeScore);
     const now = new Date();
 
@@ -189,7 +183,7 @@ export class MemoryRepository {
     });
 
     await tx.$executeRaw`
-      UPDATE memory SET embedding = ${`[${memCentroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
+      UPDATE memory SET embedding = ${`[${centroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
     `;
 
     const rootId = newMemory.root_memory_id ?? newMemory.id;
@@ -225,7 +219,7 @@ export class MemoryRepository {
       `;
     }
 
-    await this.messageRepo.markProceededTx(tx, messages.map(m => m.id));
+    await this.messageRepo.markProceededTx(tx, messageIds);
 
     return { id: newMemory.id, is_pinned: newMemory.is_pinned, score, sensitivity: clamp(analysis.sensitivity) };
   }
@@ -768,7 +762,7 @@ export class MemoryRepository {
       ORDER BY content_idx, final_score DESC
     `);
 
-    const associations: string[][] = contentEmbeddings.map(() => []);
+    const associations: string[][] = [];
     for (const row of rows) {
       associations[row.content_idx].push(row.message_id);
     }
