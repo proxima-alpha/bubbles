@@ -58,13 +58,7 @@ export class SchedulerService {
 
   async parseRowsToExchange(rows: ExchangeRow[]): Promise<Map<string, ExchangeRow[]>> {
     const exchanges = new Map<string, ExchangeRow[]>(
-      rows.filter(row => row.role === 'user').map(row => {
-        return [row.message_id, [{
-          ...row,
-          content: row.message_content!,
-          weight: 1
-        }]]
-      })
+      rows.filter(row => row.role === 'user').map(row => [row.message_id, [row]])
     );
 
     rows.filter(row => !!row.parent_message_id).forEach(row => {
@@ -95,8 +89,7 @@ export class SchedulerService {
       const ids: string[] = [];
       const vectors: number[][] = [];
 
-      for (const id in exchanges) {
-        const exchange = exchanges[id];
+      for (const [id, exchange] of exchanges) {
         ids.push(id);
         vectors.push(this.modelService.getWeightedCentroid(exchange.map(e => e.embedding), exchange.map(e => e.weight)));
       }
@@ -179,11 +172,13 @@ export class SchedulerService {
     const mergeMaxSimilarity = Number(this.config.get('MERGE_MAX_SIMILARITY', 0.9));
 
     const labels = await this.systemChatService.generateMessageContents(userId, exchanges);
-    const contentEmbeddings = await this.modelService.embedTexts(labels.map(l => l.text), 'search_query: ');
-    const centroid = this.modelService.getWeightedCentroid(contentEmbeddings, labels.map(l => l.weight));
+
+    // findSimilarMemory 쿼리용 — 저장된 memory.embedding(search_document)에 대응하는 쿼리 벡터
+    const queryEmbeddings = await this.modelService.embedTexts(labels.map(l => l.text), 'search_query: ');
+    const queryCentroid = this.modelService.getWeightedCentroid(queryEmbeddings, labels.map(l => l.weight));
 
     // await this.memoryRepo.logSimilarMemory(userId, clusterCentroid);
-    const existingMemory = await this.memoryRepo.findSimilarMemory(userId, centroid, mergeMaxSimilarity);
+    const existingMemory = await this.memoryRepo.findSimilarMemory(userId, queryCentroid, mergeMaxSimilarity);
     let isMerge = existingMemory !== null;
     if (isMerge) {
       const existingMessages = await this.messageRepo.findMemoryMessages(
@@ -191,6 +186,10 @@ export class SchedulerService {
       );
       if (existingMessages.length === 0) isMerge = false;
     }
+
+    // memory.embedding으로 저장될 값 — search_document
+    const contentEmbeddings = await this.modelService.embedTexts(labels.map(l => l.text), 'search_document: ');
+    const centroid = this.modelService.getWeightedCentroid(contentEmbeddings, labels.map(l => l.weight));
 
     return {
       exchanges: exchanges,

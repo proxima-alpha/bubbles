@@ -13,7 +13,6 @@ export interface MessageForBatch {
 export interface ExchangeRow {
   role: string;
   provider: string | null;
-  message_content: string;
   content: string;
   weight: number;
   message_id: string;
@@ -97,72 +96,20 @@ export class MessageRepository {
 
   findUnprocessedExchanges(userId: string): Promise<ExchangeRow[]> {
     return this.prisma.$queryRaw<ExchangeRow[]>`
-        SELECT m.id        AS message_id,
+        SELECT m.id                             AS message_id,
                m.role,
                m.provider,
                m.terms,
                m.parent_message_id,
-               m.content   AS message_content,
-               mc.content,
-               mc.weight
-        FROM message_content mc
-                 JOIN message m ON m.id = mc.message_id
+               COALESCE(mc.content, m.content)   AS content,
+               COALESCE(mc.weight, 1)            AS weight
+        FROM message m
+                 LEFT JOIN message_content mc ON mc.message_id = m.id
         WHERE m.user_id = ${userId}::uuid
-        AND m.is_proceeded = false
-        ORDER BY m.created_at ASC, mc.seq ASC
+          AND m.is_proceeded = false
+          AND (mc.id IS NOT NULL OR m.role = 'user')
+        ORDER BY m.created_at ASC, COALESCE(mc.seq, -1) ASC
     `;
-
-    // const assistantOrder: string[] = [];
-    // const assistantById = new Map<string, {
-    //   role: string;
-    //   provider: string | null;
-    //   terms: string[];
-    //   parent_message_id: string | null
-    // }>();
-    // const contentsByMsgId = new Map<string, { content: string; embedding: number[]; weight: number }[]>();
-    // for (const row of contentRows) {
-    //   if (!assistantById.has(row.message_id)) {
-    //     assistantOrder.push(row.message_id);
-    //     assistantById.set(row.message_id, {
-    //       role: row.role,
-    //       provider: row.provider,
-    //       terms: row.terms,
-    //       parent_message_id: row.parent_message_id
-    //     });
-    //     contentsByMsgId.set(row.message_id, []);
-    //   }
-    //   contentsByMsgId.get(row.message_id)!.push({content: row.content, embedding: row.embedding, weight: row.weight});
-    // }
-    //
-    // const parentIds = [...assistantById.values()].map(m => m.parent_message_id).filter((id): id is string => id !== null);
-    // const userRows = parentIds.length > 0
-    //   ? await this.prisma.$queryRaw<MessageForBatch[]>`
-    //             SELECT id, role, provider, content, terms
-    //             FROM message
-    //             WHERE id = ANY (${parentIds}::uuid[])
-    //               AND is_proceeded = false
-    //   `
-    //   : [];
-    // const userById = new Map(userRows.map(m => [m.id, m]));
-    //
-    // return assistantOrder.map(id => {
-    //     const aMsg = assistantById.get(id)!;
-    //     const messages: MessageForBatch[] = [];
-    //     if (aMsg.parent_message_id) {
-    //       const parent = userById.get(aMsg.parent_message_id);
-    //       if (parent) messages.push(parent);
-    //     }
-    //     const contents = contentsByMsgId.get(id)!;
-    //     const content = contents.map(c => c.content).join('\n');
-    //     messages.push({id, role: aMsg.role, provider: aMsg.provider, content, terms: aMsg.terms});
-    //     return {
-    //       id,
-    //       messages,
-    //       contentEmbeddings: contents.map(c => c.embedding),
-    //       contentWeights: contents.map(c => c.weight),
-    //     };
-    //   }
-    // );
   }
 
   async findUsersOverThreshold(threshold: number): Promise<string[]> {
@@ -185,7 +132,6 @@ export class MessageRepository {
                m.provider,
                m.terms,
                m.parent_message_id,
-               m.content   AS message_content,
                mc.content,
                mc.weight
         FROM message_content mc
