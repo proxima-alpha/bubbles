@@ -91,7 +91,14 @@ export class SchedulerService {
 
       for (const [id, exchange] of exchanges) {
         ids.push(id);
-        vectors.push(this.modelService.getWeightedCentroid(exchange.map(e => e.embedding), exchange.map(e => e.weight)));
+        const primeExchanges = exchange.filter(e => e.weight >= 0.8)
+        vectors.push(this.modelService.getWeightedCentroid(primeExchanges.map(e => e.embedding), primeExchanges.map(e => e.weight)));
+        // vectors.push(this.modelService.getAverageCentroid(primeExchanges.map(e => e.embedding)));
+        // const mainExchange = exchange.filter(e => e.role !== 'user').sort((a, b) => b.weight - a.weight).at(0);
+        // if (mainExchange) {
+        //   ids.push(id);
+        //   vectors.push(mainExchange.embedding);
+        // }
       }
 
       const clusterResult = await this.runClustering(vectors, ids);

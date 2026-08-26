@@ -18,6 +18,12 @@ function formatMessages(msgs: MessageForBatch[]) {
   }));
 }
 
+function normalizeWeights(contents: WeightedLabel[]): WeightedLabel[] {
+  const sum = contents.reduce((acc, c) => acc + c.weight, 0);
+  if (sum === 0) return contents;
+  return contents.map(c => ({...c, weight: c.weight / sum}));
+}
+
 function formatExchanges(exchanges: Exchange[][]) {
   return exchanges.map(array => {
     return array.map(e => {
@@ -38,13 +44,18 @@ export class SystemChatService {
 - 주요 언어를 바꾸지 않는다 (질문 한 언어 선호)
 - 분석 절차:
 1. [질문]과 [응답]의 핵심 정보를 topic label 로만 구성된 짧은 문장으로 추출한다.
+    . topic label은 새로운 사실을 생성하지 않고 대화에 실제로 등장한 정보만 표현한다.
+    . 여러 도메인에서 다른 의미로 사용될 수 있는 일반 단어는, 해당 문맥의 구체적인 의미가 드러나도록 표현한다.
     · 기억할 가치가 있는 정보가 없으면 contents 를 빈 배열([])로 둔다.
-    . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
+    . 인사·감사·맞장구 등 특정 주제가 없는 대화는 아무것도 추출하지 않는다.
     · 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
     . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
     . 한국어 표현이 없는 단어는 영어를 사용한다.
   2. 추출한 요약을 문장 단위로 쪼개 각각 contents에 할당한다
   3. 각 문장이 전체 주제를 얼마나 대표하는지에 대한 weight를 0~1 사이의 값으로 매긴다.
+    . 대표 주제는 0.8~1.0
+    . 보조 주제는 0.3~0.8
+    . 외의 주제는 0.0~0.3
 
 - contents[i].text: 추출·정제된 핵심 정보 한 문장
 - contents[i].weight: 해당 문장이 전체 주제를 얼마나 대표하는지에 대한 점수(0~1)
@@ -85,14 +96,19 @@ export class SystemChatService {
 [지침]
 - 주요 언어를 바꾸지 않는다 (질문 한 언어 선호)
 - 분석 절차:
-1. [질문]과 [응답]의 핵심 정보를 topic label 로만 구성된 짧은 문장으로 추출한다.
+  1. [질문]과 [응답]의 핵심 정보를 topic label 로만 구성된 짧은 문장으로 추출한다.
+    . topic label은 새로운 사실을 생성하지 않고 대화에 실제로 등장한 정보만 표현한다.
+    . 여러 도메인에서 다른 의미로 사용될 수 있는 일반 단어는, 해당 문맥의 구체적인 의미가 드러나도록 표현한다.
     · 기억할 가치가 있는 정보가 없으면 contents 를 빈 배열([])로 둔다.
-    . 인사·감사·맞장구 등 정보가 없는 대화는 아무것도 추출하지 않는다.
+    . 인사·감사·맞장구 등 특정 주제가 없는 대화는 아무것도 추출하지 않는다.
     · 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
     . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
     . 한국어 표현이 없는 단어는 영어를 사용한다.
   2. 추출한 요약을 문장 단위로 쪼개 각각 contents에 할당한다
   3. 각 문장이 전체 주제를 얼마나 대표하는지에 대한 weight를 0~1 사이의 값으로 매긴다.
+    . 대표 주제는 0.8~1.0
+    . 보조 주제는 0.3~0.8
+    . 외의 주제는 0.0~0.3
 
 - contents[i].text: 추출·정제된 핵심 정보 한 문장
 - contents[i].weight: 해당 문장이 전체 주제를 얼마나 대표하는지에 대한 점수(0~1)

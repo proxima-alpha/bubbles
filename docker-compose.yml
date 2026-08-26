@@ -13,7 +13,7 @@ services:
       - db_data:/var/lib/postgresql/data
 
   ollama:
-    image: ollama/ollama
+    image: ollama/ollama:0.32.15
     environment:
       - OLLAMA_KEEP_ALIVE=24h
     ports:
@@ -22,7 +22,7 @@ services:
       - ollama_data:/root/.ollama
 
   ollama-init:
-    image: ollama/ollama
+    image: ollama/ollama:0.32.15
     depends_on:
       - ollama
     environment:
