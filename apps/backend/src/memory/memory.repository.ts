@@ -83,7 +83,6 @@ export class MemoryRepository {
     vec: number[],
     threshold: number,
   ): Promise<{ id: string; version: number; root_memory_id: string | null; content: string | null } | null> {
-    console.log(vec)
     const rows = await this.prisma.$queryRaw<
       { id: string; version: number; root_memory_id: string | null; content: string | null; similarity: number }[]
     >`

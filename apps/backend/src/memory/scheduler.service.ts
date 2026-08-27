@@ -83,21 +83,25 @@ export class SchedulerService {
 
     if (exchanges.size <= 1) {
       for (const [_, exchange] of exchanges) {
-        groups.push(await this.checkMessageFromMemory(userId, [exchange]));
+        if (exchange.length > 0) {
+          groups.push(await this.checkMessageFromMemory(userId, [exchange]));
+        }
       }
     } else {
       const ids: string[] = [];
       const vectors: number[][] = [];
 
       for (const [id, exchange] of exchanges) {
-        ids.push(id);
         const primeExchanges = exchange.filter(e => e.weight >= 0.8)
-        vectors.push(this.modelService.getWeightedCentroid(primeExchanges.map(e => e.embedding), primeExchanges.map(e => e.weight)));
+        if (primeExchanges.length >= 2) {
+          ids.push(id);
+          vectors.push(this.modelService.getWeightedCentroid(primeExchanges.map(e => e.embedding), primeExchanges.map(e => e.weight)));
+        }
         // vectors.push(this.modelService.getAverageCentroid(primeExchanges.map(e => e.embedding)));
-        // const mainExchange = exchange.filter(e => e.role !== 'user').sort((a, b) => b.weight - a.weight).at(0);
-        // if (mainExchange) {
+        // const primeExchanges = exchange.sort((a, b) => b.weight - a.weight);
+        // if (primeExchanges.length>=2) {
         //   ids.push(id);
-        //   vectors.push(mainExchange.embedding);
+        //   vectors.push(this.modelService.getAverageCentroid(primeExchanges.slice(0, 2).map(e => e.embedding)));
         // }
       }
 

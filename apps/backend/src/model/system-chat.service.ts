@@ -38,30 +38,27 @@ export class SystemChatService {
   constructor(private modelService: ModelService) {
   }
 
-  async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<WeightedLabel[]> {
-    const systemPrompt = `[질문]과 [응답]을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
+  private messageContentRule = `
 [지침]
-- 주요 언어를 바꾸지 않는다 (질문 한 언어 선호)
-- 분석 절차:
-1. [질문]과 [응답]의 핵심 정보를 topic label 로만 구성된 짧은 문장으로 추출한다.
-    . topic label은 새로운 사실을 생성하지 않고 대화에 실제로 등장한 정보만 표현한다.
-    . 여러 도메인에서 다른 의미로 사용될 수 있는 일반 단어는, 해당 문맥의 구체적인 의미가 드러나도록 표현한다.
-    · 기억할 가치가 있는 정보가 없으면 contents 를 빈 배열([])로 둔다.
-    . 인사·감사·맞장구 등 특정 주제가 없는 대화는 아무것도 추출하지 않는다.
-    · 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
-    . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
-    . 한국어 표현이 없는 단어는 영어를 사용한다.
-  2. 추출한 요약을 문장 단위로 쪼개 각각 contents에 할당한다
-  3. 각 문장이 전체 주제를 얼마나 대표하는지에 대한 weight를 0~1 사이의 값으로 매긴다.
-    . 대표 주제는 0.8~1.0
-    . 보조 주제는 0.3~0.8
-    . 외의 주제는 0.0~0.3
-
-- contents[i].text: 추출·정제된 핵심 정보 한 문장
-- contents[i].weight: 해당 문장이 전체 주제를 얼마나 대표하는지에 대한 점수(0~1)
+- contents[i].text는 대화에 등장한, 장기 기억으로 남길 만한 정보를 완결된 평서문으로 표현한 한 문장이다.
+- contents는 빈 배열일 수 있다.
+- 원문의 언어를 선호한다.
+- 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
+1. 대화에서 장기 기억으로 남길 만한 정보를 완결된 문장으로 추출한다.
+    . 대화에 실제로 등장한 정보만 사용하고 새로운 사실을 만들지 않는다.
+    . 각 문장은 구체적인 주제와 맥락이 드러나도록 서술한다.
+    . 여러 도메인에서 다른 의미로 쓰일 수 있는 단어는 현재 문맥의 의미가 드러나게 표현한다.
+    . 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
+2. 각 문장이 전체 주제를 얼마나 대표하는지 weight를 0~1로 매긴다.
+    . 대표 주제: 0.8~1.0
+    . 보조 주제: 0.3 이상 0.8 미만
+    . 그 외 주제: 0.0 이상 0.3 미만
 `
 
-    const dataText = `[질문]\n${questionContent}\n\n[응답]\n${answerContent}`
+  async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<WeightedLabel[]> {
+    const systemPrompt = `Analyze [Question] and [Response] according to the instructions below and return the result as JSON.${this.messageContentRule}`
+
+    const dataText = `[Question]\n${questionContent}\n\n[Response]\n${answerContent}`
 
     const raw = await this.modelService.chat(userId, [
       {role: 'system', content: systemPrompt},
@@ -92,29 +89,9 @@ export class SystemChatService {
   async generateMessageContents(userId: string, exchanges: Exchange[][]): Promise<WeightedLabel[]> {
     const inputArray = formatExchanges(exchanges);
 
-    const systemPrompt = `[대화] 내용을 보고 [지침]에 따라 분석하여 JSON으로 응답하세요.
-[지침]
-- 주요 언어를 바꾸지 않는다 (질문 한 언어 선호)
-- 분석 절차:
-  1. [질문]과 [응답]의 핵심 정보를 topic label 로만 구성된 짧은 문장으로 추출한다.
-    . topic label은 새로운 사실을 생성하지 않고 대화에 실제로 등장한 정보만 표현한다.
-    . 여러 도메인에서 다른 의미로 사용될 수 있는 일반 단어는, 해당 문맥의 구체적인 의미가 드러나도록 표현한다.
-    · 기억할 가치가 있는 정보가 없으면 contents 를 빈 배열([])로 둔다.
-    . 인사·감사·맞장구 등 특정 주제가 없는 대화는 아무것도 추출하지 않는다.
-    · 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
-    . 같은 개념의 단어가 한국어와 영어로 모두 표기된 경우 한국어를 사용한다.
-    . 한국어 표현이 없는 단어는 영어를 사용한다.
-  2. 추출한 요약을 문장 단위로 쪼개 각각 contents에 할당한다
-  3. 각 문장이 전체 주제를 얼마나 대표하는지에 대한 weight를 0~1 사이의 값으로 매긴다.
-    . 대표 주제는 0.8~1.0
-    . 보조 주제는 0.3~0.8
-    . 외의 주제는 0.0~0.3
+    const systemPrompt = `Analyze [Conversation] according to the instructions below and return the result as JSON.${this.messageContentRule}`
 
-- contents[i].text: 추출·정제된 핵심 정보 한 문장
-- contents[i].weight: 해당 문장이 전체 주제를 얼마나 대표하는지에 대한 점수(0~1)
-`
-
-    const dataText = `[대화]\n${JSON.stringify(inputArray, null, 2)}`
+    const dataText = `[Conversation]\n${JSON.stringify(inputArray, null, 2)}`
 
     const raw = await this.modelService.chat(userId, [
       {role: 'system', content: systemPrompt,},
