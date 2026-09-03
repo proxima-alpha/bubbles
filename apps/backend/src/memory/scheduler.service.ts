@@ -80,11 +80,14 @@ export class SchedulerService {
     if (exchanges.size === 0) return [];
 
     let groups: ExchangeGroup[] = [];
+    const skippedMessageIds: string[] = [];
 
     if (exchanges.size <= 1) {
       for (const [_, exchange] of exchanges) {
-        if (exchange.length > 0) {
+        if (exchange.filter(e => e.role !== 'user').length > 0) {
           groups.push(await this.checkMessageFromMemory(userId, [exchange]));
+        } else {
+          skippedMessageIds.push(...exchange.map(e => e.message_id));
         }
       }
     } else {
@@ -93,9 +96,11 @@ export class SchedulerService {
 
       for (const [id, exchange] of exchanges) {
         const primeExchanges = exchange.filter(e => e.weight >= 0.8)
-        if (primeExchanges.length >= 2) {
+        if (exchange.filter(e => e.role !== 'user').length > 0 && primeExchanges.length >= 2) {
           ids.push(id);
           vectors.push(this.modelService.getWeightedCentroid(primeExchanges.map(e => e.embedding), primeExchanges.map(e => e.weight)));
+        } else {
+          skippedMessageIds.push(...exchange.map(e => e.message_id));
         }
         // vectors.push(this.modelService.getAverageCentroid(primeExchanges.map(e => e.embedding)));
         // const primeExchanges = exchange.sort((a, b) => b.weight - a.weight);
@@ -123,7 +128,6 @@ export class SchedulerService {
     groups = this.consolidateByTarget(groups);
 
     const pendingSaves: SaveArgs[] = [];
-    const skippedMessageIds: string[] = [];
     for (const group of groups) {
       const existingMessages = group.existingMemory
         ? await this.messageRepo.findMemoryMessages(group.existingMemory.root_memory_id ?? group.existingMemory.id)

@@ -9,11 +9,22 @@ import {UserRepository} from '../user/user.repository';
 import {MessageContent} from './dto/message-content.dto';
 import {ChatMessageRequest} from "./dto/chat-message-request";
 
-function buildSystemPrompt(mainMemory: string | null, knowledgeItems: string[]): string {
-  let prompt = '당신은 사용자를 깊이 이해하는 개인 AI 어시스턴트입니다.';
-  if (mainMemory) prompt += `\n\n[사용자 기억]\n${mainMemory}`;
-  if (knowledgeItems.length > 0) prompt += `\n\n[관련 지식]\n${knowledgeItems.join('\n---\n')}`;
-  return prompt;
+function formatHistory(messages: {role: string; content: string}[]): string {
+  return messages.map(m => {
+    const title = m.role === 'user' ? '[질문]' : '[응답]';
+    return `${title}\n${m.content}`;
+  }).join('\n\n');
+}
+
+function buildSystemPrompt(mainMemory: string | null, history: string): string {
+  const blocks: string[] = [
+    `- [사용자 기억]은 사용자에 대한 장기 기억을 압축한 정보입니다. 답변에 필요하면 참고합니다.
+- [대화 기록]은 최근 대화의 흐름입니다. 맥락 파악에 사용합니다.
+- 답변은 간결하게 합니다.`,
+  ];
+  if (mainMemory) blocks.push(`[사용자 기억]\n${mainMemory}`);
+  if (history) blocks.push(`[대화 기록]\n${history}`);
+  return blocks.join('\n\n');
 }
 
 @Injectable()
@@ -32,32 +43,18 @@ export class ChatService {
     const user = await this.userRepo.findById(userId);
     if (!user?.model) throw new ForbiddenException('No model selected');
 
-    const userMsg = await this.messageRepo.createMessage({user_id: userId, role: 'user', content: dto.content});
+    const content = dto.content;
 
-    let queryEmbedding: number[];
-    try {
-      queryEmbedding = await this.modelService.embedTextChunked(dto.content, 'search_query: ');
-    } catch (e) {
-      res.status(503).json({message: '잠시 후 재시도해주세요.'});
-      return;
-    }
+    const historyTopN = Number(this.config.get('CHAT_HISTORY_TOP_N', 10));
+    const recentMessages = await this.messageRepo.findRecentMessages(userId, historyTopN);
+    const mainMemory = await this.memoryService.getActiveMainMemory(userId);
+    const systemPrompt = buildSystemPrompt(mainMemory, formatHistory(recentMessages));
 
-    const topK = Number(this.config.get('RAG_TOP_K', 5));
-    const [mainMemory, topKnowledge] = await Promise.all([
-      this.memoryService.getActiveMainMemory(userId),
-      this.memoryService.getTopKnowledge(userId, queryEmbedding, topK),
-    ]);
-
-    const systemPrompt = buildSystemPrompt(mainMemory, topKnowledge.map(m => m.summary));
-
-    const recentMessages = await this.messageRepo.findRecentMessages(userId, 20);
+    const userMsg = await this.messageRepo.createMessage({user_id: userId, role: 'user', content});
 
     const messages = [
       {role: 'system' as const, content: systemPrompt},
-      ...recentMessages.reverse().map(m => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      })),
+      {role: 'user' as const, content},
     ];
 
     const {model, provider, modelCode, providerCode} = await this.modelService.getModelInfo(userId);

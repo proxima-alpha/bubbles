@@ -68,11 +68,25 @@ export class MessageRepository {
   }
 
   async findRecentMessages(userId: string, take: number) {
-    return this.prisma.message.findMany({
-      where: {user_id: userId},
-      orderBy: {created_at: 'desc'},
-      take,
-    });
+    return this.prisma.$queryRaw<{ id: string; role: string; content: string; created_at: Date }[]>`
+        WITH recent_exchange AS (SELECT id
+                                  FROM message
+                                  WHERE user_id = ${userId}::uuid
+                                    AND role = 'user'
+                                  ORDER BY created_at DESC
+                                  LIMIT ${take}),
+             recent AS (SELECT m.id, m.role, m.content, m.created_at
+                        FROM message m
+                                 JOIN recent_exchange re ON m.id = re.id OR m.parent_message_id = re.id)
+        SELECT r.id,
+               r.role,
+               r.created_at,
+               COALESCE(string_agg(mc.content, ' ' ORDER BY mc.seq), r.content) AS content
+        FROM recent r
+                 LEFT JOIN message_content mc ON mc.message_id = r.id
+        GROUP BY r.id, r.role, r.content, r.created_at
+        ORDER BY r.created_at ASC
+    `;
   }
 
   async findHistory(userId: string) {

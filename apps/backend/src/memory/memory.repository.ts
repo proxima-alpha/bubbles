@@ -762,7 +762,7 @@ export class MemoryRepository {
       ORDER BY content_idx, final_score DESC
     `);
 
-    const associations: string[][] = [];
+    const associations: string[][] = contentEmbeddings.map(() => []);
     for (const row of rows) {
       associations[row.content_idx].push(row.message_id);
     }
