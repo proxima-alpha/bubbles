@@ -83,8 +83,9 @@ export class MemoryService {
     return { id: result.id, isPinned: result.is_pinned };
   }
 
-  async importKnowledge(userId: string, content: string) {
-    const analysis = await this.systemChatService.analyzeImportContent(userId, content);
+  async importKnowledge(userId: string, contents: string[]) {
+    const analysis = await this.systemChatService.analyzeImportContent(userId, contents);
+    const content = contents.join('\n');
     const embedding = await this.modelService.embedText(content);
     const result = await this.memoryRepo.importKnowledgeMemory(userId, analysis, content, embedding);
     return this.getKnowledgeDetail(userId, result.id);

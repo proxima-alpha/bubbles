@@ -5,7 +5,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import api from '@/lib/api';
 import { HeaderNav } from '@/components/header-nav';
-import { MarkdownContent } from '@/components/markdown-content';
 
 interface Keyword {
   code: string;
@@ -89,9 +88,11 @@ function MainMemoryCard() {
           </div>
         </div>
       ) : main?.summary ? (
-        <div className="text-sm text-gray-700">
-          <MarkdownContent content={main.summary} />
-        </div>
+        <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside">
+          {main.summary.split('\n').filter(Boolean).map((line, i) => (
+            <li key={i}>{line}</li>
+          ))}
+        </ul>
       ) : (
         <p className="text-sm text-gray-400">아직 생성된 메인 메모리가 없습니다.</p>
       )}
@@ -115,22 +116,9 @@ export default function MemoryPage() {
     queryFn: () => api.get('/memory/knowledge').then(r => r.data),
   });
 
-  const importMutation = useMutation({
-    mutationFn: (content: string) => api.post('/memory/import', { content }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['knowledge-memories'] }),
-  });
-
   const handleExportAll = async () => {
     const res = await api.get('/memory/export', { responseType: 'blob' });
     downloadBlob(res.data, 'memory-export.md');
-  };
-
-  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const content = await file.text();
-    importMutation.mutate(content);
-    e.target.value = '';
   };
 
   return (
@@ -143,10 +131,6 @@ export default function MemoryPage() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold">지식 메모리</h2>
           <div className="flex items-center gap-3">
-            <label className="text-xs text-gray-600 hover:text-black cursor-pointer">
-              가져오기
-              <input type="file" accept=".md" onChange={handleImportFile} className="hidden" />
-            </label>
             <button onClick={handleExportAll} className="text-xs text-gray-600 hover:text-black">
               전체 내보내기
             </button>

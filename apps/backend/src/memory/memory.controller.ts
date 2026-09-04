@@ -73,7 +73,7 @@ export class MemoryController {
 
   @Post('import')
   importKnowledge(@Request() req: { user: { id: string } }, @Body() dto: ImportKnowledgeDto) {
-    return this.memoryService.importKnowledge(req.user.id, dto.content);
+    return this.memoryService.importKnowledge(req.user.id, dto.contents);
   }
 
   @Get('knowledge/:id/export')

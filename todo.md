@@ -6,6 +6,8 @@
 - [x] job-search 원본 메시지 4개(`72226caf`, `d42e6732`, `5c75e7ce`, `da842acd`) `is_proceeded=false`로 리셋 후 재처리 — 이번엔 별도 memory로 제대로 분리되는지 확인
 - [ ] main memory 승격 테스트 — knowledge memory 2개 이상 확보되면 `scheduler.manual.spec.ts`로 `updateMainMemory` 실행
 - [ ] chat 시 시스템 프롬프트에 main memory, 최근 history(exchange 단위)가 실제로 잘 들어가는지 테스트
+- [ ] `analyzeImportContent`가 `contents: string[]`를 받도록 변경(각 content는 사용자 작성 문장 그대로 사용, keywords/summary/점수만 LLM이 추출) — 테스트 아직 안 함
+- [ ] import 기능의 파일 업로드 UI(`memory/page.tsx`의 "가져오기" 버튼, `.md` 파일 통째 업로드) 제거함 — `contents: string[]` 입력 방식에 맞는 새 UI 필요. 큰 문서/파일 케이스는 별도 요약 추출 단계(과거 `analyzeImportContent`가 하던 문장 추출 방식)가 필요할 수 있음, 재설계 필요
 - [ ] `scheduler.manual.spec.ts`의 `jest.setTimeout(0)` 버그 수정 — jest-circus에서 0은 "무제한"이 아니라 즉시 timeout으로 처리됨(`test.timeout || state.testTimeout` 에서 0이 falsy가 아니라 그대로 setTimeout(fn, 0)으로 들어감). 충분히 큰 값(예: 600000)으로 교체 필요
 - [x] `scheduler.service.ts:59` `parseRowsToExchange`의 `row.role === 'user'` 시딩 — `message.repository.ts` `findUnprocessedExchanges`를 INNER JOIN → LEFT JOIN(message 기준)으로 교체, user row도 COALESCE(mc.content, m.content)/COALESCE(mc.weight, 1)로 포함되게 수정
 - [x] `scheduler.service.ts:99-100` `for (const id in exchanges)` / `exchanges[id]` — `for (const [id, exchange] of exchanges)`로 교체

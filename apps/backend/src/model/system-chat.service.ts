@@ -214,21 +214,30 @@ export class SystemChatService {
     return JSON.parse(jsonMatch[0]) as LlmMemoryAnalysis;
   }
 
-  async analyzeImportContent(userId: string, content: string): Promise<LlmMemoryAnalysis> {
-    const systemPrompt = `다음 [문서]를 [지침]에 따라 분석하여 JSON으로 응답하세요.
+  async analyzeImportContent(userId: string, contents: string[]): Promise<LlmMemoryAnalysis> {
+    const blocks: string[] = [
+      `[정보] 목록을 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
-- 주요 언어를 바꾸지 않는다
-- 문서에서 장기 기억으로 남길 핵심 정보를 짧은 문장들의 문어체로 추출해 contents에 문장 단위로 할당한다
-- 추출한 정보 중 keywords를 뽑는다
-- contents[i]: 추출·정제된 핵심 정보 한 문장
-- keywords: 최종 완성된 contents의 핵심 주제. contents 전체를 관통하는 중심 개념만.
-- keywords[i].code: 영문 소문자·숫자·하이픈 (예: rag-technique)
-- keywords[i].name: 키워드명, 한글 선호, 괄호 등 부가설명 하지않음
-- summary: contents 전체의 요약 한 문장
-- 점수(0~1): importance(사용자 이해에 중요할수록 높음), durability(시간이 지나도 유효할수록 높음), reusefulness(재활용 가능성), sensitivity(민감정보일수록 높음), explicit_signal(사용자가 확정적으로 말할수록 높음), llm_confidence_hint(분석 신뢰도), temporary_penalty(장기 기억 가치가 낮을수록 높음)
-`;
+- [정보]의 각 항목은 사용자가 직접 작성한 확정된 문장이다. 새로 만들거나 고쳐 쓰지 않는다.
+- 중요: keywords[i].name, summary는 반드시 [정보]에서 사용된 주요 언어와 동일한 언어로 작성한다.
+- keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)`,
+      `1. [정보] 전체에서 키워드를 추출하고, 각 keyword가 [정보] 전체를 얼마나 대표하는지 weight를 매긴다.
+    . 대표 주제: 0.8~1.0
+    . 보조 주제: 0.3 이상 0.8 미만
+    . 그 외 주제: 0.0 이상 0.3 미만
+2. [정보] 전체에 대해 아래 점수를 0~1로 매긴다.
+    . importance: 사용자 이해에 중요할수록 높음
+    . durability: 시간이 지나도 유효할수록 높음
+    . reusefulness: 재활용 가능성이 높을수록 높음
+    . sensitivity: 민감 정보일수록 높음
+    . explicit_signal: 사용자가 확정적으로 말할수록 높음
+    . llm_confidence_hint: 분석 신뢰도가 높을수록 높음
+    . temporary_penalty: 장기 기억 가치가 낮을수록 높음 (날씨·일시적 감정 → 높음, 직업·가치관 → 낮음)
+3. [정보] 전체를 한 문장으로 요약하여 summary에 담는다.`,
+    ];
+    const systemPrompt = blocks.join('\n\n');
 
-    const dataText = `[문서]\n${content}`;
+    const dataText = `[정보]\n${JSON.stringify(contents, null, 2)}`;
 
     const schema = {
       type: 'object',
@@ -242,11 +251,11 @@ export class SystemChatService {
             properties: {
               code: {type: 'string'},
               name: {type: 'string'},
+              weight: {type: 'number'},
             },
-            required: ['code', 'name'],
+            required: ['code', 'name', 'weight'],
           },
         },
-        contents: {type: 'array', items: {type: 'string'}},
         summary: {type: 'string'},
         importance: {type: 'number'},
         durability: {type: 'number'},
@@ -257,7 +266,7 @@ export class SystemChatService {
         temporary_penalty: {type: 'number'},
       },
       required: [
-        'keywords', 'contents', 'summary',
+        'keywords', 'summary',
         'importance', 'durability', 'reusefulness', 'sensitivity',
         'explicit_signal', 'llm_confidence_hint', 'temporary_penalty',
       ],
@@ -269,7 +278,8 @@ export class SystemChatService {
     ], undefined, schema);
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
-    return JSON.parse(jsonMatch[0]) as LlmMemoryAnalysis;
+    const parsed = JSON.parse(jsonMatch[0]) as Omit<LlmMemoryAnalysis, 'contents'>;
+    return {...parsed, contents};
   }
 
   async synthesizeMainMemory(userId: string, existingSummary: string | null, newKnowledges: string[]): Promise<string[]> {
