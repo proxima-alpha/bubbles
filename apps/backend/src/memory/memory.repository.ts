@@ -320,7 +320,7 @@ export class MemoryRepository {
       where: {user_id: userId, type: 'main', is_active: true, deleted_at: null},
       select: {
         id: true, version: true, created_at: true,
-        contents: {select: {id: true, content: true}, orderBy: {created_at: 'asc'}},
+        contents: {select: {id: true, content: true}, orderBy: [{seq: 'asc'}, {created_at: 'asc'}]},
       },
     });
   }
@@ -328,7 +328,7 @@ export class MemoryRepository {
   async getActiveMainMemory(userId: string): Promise<string | null> {
     const row = await this.prisma.memory.findFirst({
       where: {user_id: userId, type: 'main', is_active: true, deleted_at: null},
-      select: {contents: {select: {content: true}, orderBy: {created_at: 'asc'}}},
+      select: {contents: {select: {content: true}, orderBy: [{seq: 'asc'}, {created_at: 'asc'}]}},
     });
     if (!row || row.contents.length === 0) return null;
     return row.contents.map(c => c.content).join('\n');
@@ -666,8 +666,8 @@ export class MemoryRepository {
           root_memory_id: null,
         },
       });
-      for (const content of contents) {
-        await tx.memory_content.create({data: {memory_id: newMemory.id, content}});
+      for (const [seq, content] of contents.entries()) {
+        await tx.memory_content.create({data: {memory_id: newMemory.id, content, seq}});
       }
       return newMemory;
     });
