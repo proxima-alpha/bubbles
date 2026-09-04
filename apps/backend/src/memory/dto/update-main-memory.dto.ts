@@ -1,6 +1,7 @@
-import { IsString } from 'class-validator';
+import { IsArray, IsString } from 'class-validator';
 
 export class UpdateMainMemoryDto {
-  @IsString()
-  summary: string;
+  @IsArray()
+  @IsString({ each: true })
+  contents: string[];
 }

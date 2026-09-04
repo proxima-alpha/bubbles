@@ -16,8 +16,8 @@ interface CodeDto {
 interface Message {
   id: string;
   role: 'user' | 'assistant';
-  provider: CodeDto | null;
-  model: CodeDto | null;
+  provider?: CodeDto | null;
+  model?: CodeDto | null;
   content: string;
   createdAt: string;
 }

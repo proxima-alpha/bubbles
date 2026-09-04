@@ -68,7 +68,7 @@ export class MemoryController {
 
   @Put('main')
   updateMainMemory(@Request() req: { user: { id: string } }, @Body() dto: UpdateMainMemoryDto) {
-    return this.memoryService.updateMainMemory(req.user.id, dto.summary);
+    return this.memoryService.updateMainMemory(req.user.id, dto.contents);
   }
 
   @Post('import')

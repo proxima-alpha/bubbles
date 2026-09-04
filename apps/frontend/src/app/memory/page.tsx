@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import api from '@/lib/api';
 import { HeaderNav } from '@/components/header-nav';
+import { Trash2 } from 'lucide-react';
 
 interface Keyword {
   code: string;
@@ -28,7 +29,8 @@ interface MainMemory {
 function MainMemoryCard() {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
-  const [summary, setSummary] = useState('');
+  const [lines, setLines] = useState<string[]>([]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   const { data: main, isLoading } = useQuery<MainMemory>({
     queryKey: ['main-memory'],
@@ -36,16 +38,26 @@ function MainMemoryCard() {
   });
 
   useEffect(() => {
-    if (main) setSummary(main.summary ?? '');
+    if (main) setLines((main.summary ?? '').split('\n').filter(Boolean));
   }, [main]);
 
   const updateMutation = useMutation({
-    mutationFn: (summary: string) => api.put('/memory/main', { summary }),
+    mutationFn: (contents: string[]) => api.put('/memory/main', { contents }),
     onSuccess: () => {
       setEditing(false);
       queryClient.invalidateQueries({ queryKey: ['main-memory'] });
     },
   });
+
+  const moveLine = (from: number, to: number) => {
+    if (from === to) return;
+    setLines(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  };
 
   if (isLoading) return null;
 
@@ -62,28 +74,55 @@ function MainMemoryCard() {
 
       {editing ? (
         <div className="space-y-2">
-          <textarea
-            value={summary}
-            onChange={e => setSummary(e.target.value)}
-            rows={5}
-            className="w-full border rounded px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-black"
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={() => updateMutation.mutate(summary)}
-              disabled={updateMutation.isPending}
-              className="bg-black text-white rounded px-3 py-1.5 text-xs disabled:opacity-50"
+          {lines.map((line, i) => (
+            <div
+              key={i}
+              draggable
+              onDragStart={() => setDragIndex(i)}
+              onDragOver={e => e.preventDefault()}
+              onDrop={() => {
+                if (dragIndex !== null) moveLine(dragIndex, i);
+                setDragIndex(null);
+              }}
+              className="flex items-center gap-2"
             >
-              저장
-            </button>
+              <span className="cursor-grab text-gray-400 select-none">⠿</span>
+              <input
+                value={line}
+                onChange={e => setLines(prev => prev.map((l, idx) => (idx === i ? e.target.value : l)))}
+                className="flex-1 border rounded px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-black"
+              />
+              <button
+                onClick={() => setLines(prev => prev.filter((_, idx) => idx !== i))}
+                className="text-gray-400 hover:text-red-600"
+                aria-label="삭제"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={() => setLines(prev => [...prev, ''])}
+            className="w-full border border-dashed rounded px-2 py-1.5 text-sm text-gray-500 hover:text-black hover:border-gray-400"
+          >
+            + 추가
+          </button>
+          <div className="flex justify-end gap-2">
             <button
               onClick={() => {
                 setEditing(false);
-                setSummary(main?.summary ?? '');
+                setLines((main?.summary ?? '').split('\n').filter(Boolean));
               }}
               className="text-xs text-gray-600 hover:text-black"
             >
               취소
+            </button>
+            <button
+              onClick={() => updateMutation.mutate(lines.filter(Boolean))}
+              disabled={updateMutation.isPending}
+              className="bg-black text-white rounded px-3 py-1.5 text-xs disabled:opacity-50"
+            >
+              저장
             </button>
           </div>
         </div>
