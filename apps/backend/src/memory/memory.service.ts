@@ -49,12 +49,15 @@ export class MemoryService {
 
   async getMainMemory(userId: string) {
     const main = await this.memoryRepo.findMainMemory(userId);
-    return { summary: main?.summary ?? null, updatedAt: main?.created_at ?? null };
+    return {
+      contents: main?.contents.map(c => ({ id: c.id, content: c.content })) ?? [],
+      updatedAt: main?.created_at ?? null,
+    };
   }
 
   async updateMainMemory(userId: string, contents: string[]) {
     const existing = await this.memoryRepo.findMainMemory(userId);
-    await this.memoryRepo.saveMainMemory(userId, contents.join('\n'), existing, 'modified');
+    await this.memoryRepo.saveMainMemory(userId, contents, existing, 'modified');
     return this.getMainMemory(userId);
   }
 

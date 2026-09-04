@@ -318,16 +318,20 @@ export class MemoryRepository {
   async findMainMemory(userId: string) {
     return this.prisma.memory.findFirst({
       where: {user_id: userId, type: 'main', is_active: true, deleted_at: null},
-      select: {id: true, version: true, summary: true, created_at: true},
+      select: {
+        id: true, version: true, created_at: true,
+        contents: {select: {id: true, content: true}, orderBy: {created_at: 'asc'}},
+      },
     });
   }
 
   async getActiveMainMemory(userId: string): Promise<string | null> {
     const row = await this.prisma.memory.findFirst({
       where: {user_id: userId, type: 'main', is_active: true, deleted_at: null},
-      select: {summary: true},
+      select: {contents: {select: {content: true}, orderBy: {created_at: 'asc'}}},
     });
-    return row?.summary ?? null;
+    if (!row || row.contents.length === 0) return null;
+    return row.contents.map(c => c.content).join('\n');
   }
 
   async getTopKnowledge(userId: string, embedding: number[], topK: number): Promise<{ id: string; summary: string }[]> {
@@ -640,7 +644,7 @@ export class MemoryRepository {
 
   async saveMainMemory(
     userId: string,
-    summary: string,
+    contents: string[],
     existing: { id: string; version: number } | null,
     historyType: 'renewed' | 'modified' = 'renewed',
   ) {
@@ -651,16 +655,21 @@ export class MemoryRepository {
         data: {is_active: false, deactivated_at: now},
       });
     }
-    return this.prisma.memory.create({
-      data: {
-        user_id: userId,
-        type: 'main',
-        history_type: historyType,
-        version: existing ? existing.version + 1 : 1,
-        parent_memory_id: existing?.id ?? null,
-        root_memory_id: null,
-        summary,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const newMemory = await tx.memory.create({
+        data: {
+          user_id: userId,
+          type: 'main',
+          history_type: historyType,
+          version: existing ? existing.version + 1 : 1,
+          parent_memory_id: existing?.id ?? null,
+          root_memory_id: null,
+        },
+      });
+      for (const content of contents) {
+        await tx.memory_content.create({data: {memory_id: newMemory.id, content}});
+      }
+      return newMemory;
     });
   }
 

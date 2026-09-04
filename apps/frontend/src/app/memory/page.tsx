@@ -22,7 +22,7 @@ interface KnowledgeMemory {
 }
 
 interface MainMemory {
-  summary: string | null;
+  contents: { id: string; content: string }[];
   updatedAt: string | null;
 }
 
@@ -38,7 +38,7 @@ function MainMemoryCard() {
   });
 
   useEffect(() => {
-    if (main) setLines((main.summary ?? '').split('\n').filter(Boolean));
+    if (main) setLines(main.contents.map(c => c.content));
   }, [main]);
 
   const updateMutation = useMutation({
@@ -111,7 +111,7 @@ function MainMemoryCard() {
             <button
               onClick={() => {
                 setEditing(false);
-                setLines((main?.summary ?? '').split('\n').filter(Boolean));
+                setLines(main?.contents.map(c => c.content) ?? []);
               }}
               className="text-xs text-gray-600 hover:text-black"
             >
@@ -126,10 +126,10 @@ function MainMemoryCard() {
             </button>
           </div>
         </div>
-      ) : main?.summary ? (
+      ) : main && main.contents.length > 0 ? (
         <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside">
-          {main.summary.split('\n').filter(Boolean).map((line, i) => (
-            <li key={i}>{line}</li>
+          {main.contents.map(c => (
+            <li key={c.id}>{c.content}</li>
           ))}
         </ul>
       ) : (

@@ -268,11 +268,12 @@ export class SchedulerService {
     const newKnowledges = promoted.filter(m => m.summary).map(m => m.summary ?? '');
 
     if (!existing) {
-      await this.memoryRepo.saveMainMemory(userId, newKnowledges.join("\n"), existing);
+      await this.memoryRepo.saveMainMemory(userId, newKnowledges, existing);
     } else {
-      const mainSummary = await this.systemChatService.synthesizeMainMemory(userId, existing.summary, newKnowledges);
+      const existingSummary = existing.contents.map(c => c.content).join("\n");
+      const mainSummary = await this.systemChatService.synthesizeMainMemory(userId, existingSummary, newKnowledges);
 
-      await this.memoryRepo.saveMainMemory(userId, mainSummary.join("\n"), existing);
+      await this.memoryRepo.saveMainMemory(userId, mainSummary, existing);
     }
   }
 }
