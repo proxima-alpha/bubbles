@@ -125,20 +125,25 @@ export class SystemChatService {
     existingContent?: string,
   ): Promise<LlmMemoryAnalysis> {
     const inputArray = formatExchanges(exchanges);
-    const systemPrompt = `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
+    const blocks: string[] = [
+      `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
-- contents[i].text는 대화에 등장한, 장기 기억으로 남길 만한 정보를 완결된 평서문으로 표현한 한 문장이다.
 - 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
-- contents는 빈 배열일 수 있다.
-- 원문의 언어를 선호한다.
-- 같은 개념이 한국어와 영어로 모두 표기된 경우 한국어를 사용하고, 한국어 표현이 없는 단어는 영어를 사용한다.
-
-1. 대화에서 장기 기억으로 남길 만한 정보를 완결된 문장으로 추출하여 contents에 할당한다.
+- 중요: contents[i].text, summary, keywords[i].name은 반드시 [대화]에서 사용된 주요 언어와 동일한 언어로 작성한다.
+- contents[i].text는 [대화]에 등장한, 장기 기억으로 남길 만한 정보를 완결된 평서문으로 표현한 한 문장이다.
+- contents 는 빈 배열일 수 있다.
+- keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)
+- 아래에서 말하는 추출 결과는 contents[i].text 전체 문장의 조합을 말한다.`,
+      `1. 대화에서 장기 기억으로 남길 만한 정보를 완결된 문장으로 추출하여 contents에 할당한다.
     . 대화에 실제로 등장한 정보만 사용하고 새로운 사실을 만들지 않는다.
     . 각 문장은 구체적인 주제와 맥락이 드러나도록 서술한다.
     . 여러 도메인에서 다른 의미로 쓰일 수 있는 단어는 현재 문맥의 의미가 드러나게 표현한다.
     . 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
-2. 각 contents[i]에 대해 아래 점수를 0~1로 매긴다.
+2. 추출 결과에서 키워드를 추출하고, 각 keyword가 대화 전체를 얼마나 대표하는지 weight를 매긴다.
+    . 대표 주제: 0.8~1.0
+    . 보조 주제: 0.3 이상 0.8 미만
+    . 그 외 주제: 0.0 이상 0.3 미만
+3. 추출 결과에 대해 아래 점수를 0~1로 매긴다.
     . importance: 사용자 이해에 중요할수록 높음
     . durability: 시간이 지나도 유효할수록 높음
     . reusefulness: 재활용 가능성이 높을수록 높음
@@ -146,19 +151,20 @@ export class SystemChatService {
     . explicit_signal: 사용자가 확정적으로 말할수록 높음
     . llm_confidence_hint: 분석 신뢰도가 높을수록 높음
     . temporary_penalty: 장기 기억 가치가 낮을수록 높음 (날씨·일시적 감정 → 높음, 직업·가치관 → 낮음)
-3. 최종 완성된 contents에서 전체를 관통하는 중심 개념만 keywords로 뽑는다.
-    . 부차적으로 언급된 세부 기법·예시는 keywords로 만들지 않는다.
-4. contents 전체를 한 문장으로 요약하여 summary에 담는다.
-${existingContent ? `5. [기존 기억]을 최대한 유지하고, 대화에서 새롭게 확인된 정보만 추가한다.
+4. 추출 결과를 한 문장으로 요약하여 summary에 담는다.`,
+    ];
+    if (existingContent) {
+      blocks.push(`5. [기존 기억]을 최대한 유지하고, 대화에서 새롭게 확인된 정보만 추가한다.
     . 중복 내용은 추가하지 않는다.
     . 기존 기억과 명백히 충돌하거나 변경된 경우에만 수정한다.
-    . 현재 대화와 관련이 없다는 이유로 기존 기억을 삭제하지 않는다.
-` : ``}
-- keywords[i].code: 영문 소문자·숫자·하이픈 (예: rag-technique)
-- keywords[i].name: 키워드명, 한글 선호, 괄호 등 부가 설명은 하지 않는다.
-`
+    . 현재 대화와 관련이 없다는 이유로 기존 기억을 삭제하지 않는다.`);
+    }
+    const systemPrompt = blocks.join('\n\n');
 
-    const dataText = `${existingContent ? `[기존 기억]\n${existingContent}\n\n` : ''}[대화]\n${JSON.stringify(inputArray, null, 2)}`;
+    const dataTextBlocks: string[] = [];
+    if (existingContent) dataTextBlocks.push(`[기존 기억]\n${existingContent}`);
+    dataTextBlocks.push(`[대화]\n${JSON.stringify(inputArray, null, 2)}`);
+    const dataText = dataTextBlocks.join('\n\n');
 
     const schema = {
       type: 'object',
@@ -172,8 +178,9 @@ ${existingContent ? `5. [기존 기억]을 최대한 유지하고, 대화에서 
             properties: {
               code: {type: 'string'},
               name: {type: 'string'},
+              weight: {type: 'number'},
             },
-            required: ['code', 'name'],
+            required: ['code', 'name', 'weight'],
           },
         },
         contents: {

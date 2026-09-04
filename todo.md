@@ -5,6 +5,7 @@
 - [x] DB 정리: `b5a40088-f206-4301-85d2-9b6e6ee1631c`(구직 내용, Ollama race condition 버그로 RAG memory에 잘못 merge된 version 2) 삭제 + `d6dcf2c4-95b4-4175-b184-b3b5940c012b`를 `is_active=true`로 복구
 - [x] job-search 원본 메시지 4개(`72226caf`, `d42e6732`, `5c75e7ce`, `da842acd`) `is_proceeded=false`로 리셋 후 재처리 — 이번엔 별도 memory로 제대로 분리되는지 확인
 - [ ] main memory 승격 테스트 — knowledge memory 2개 이상 확보되면 `scheduler.manual.spec.ts`로 `updateMainMemory` 실행
+- [ ] chat 시 시스템 프롬프트에 main memory, 최근 history(exchange 단위)가 실제로 잘 들어가는지 테스트
 - [ ] `scheduler.manual.spec.ts`의 `jest.setTimeout(0)` 버그 수정 — jest-circus에서 0은 "무제한"이 아니라 즉시 timeout으로 처리됨(`test.timeout || state.testTimeout` 에서 0이 falsy가 아니라 그대로 setTimeout(fn, 0)으로 들어감). 충분히 큰 값(예: 600000)으로 교체 필요
 - [x] `scheduler.service.ts:59` `parseRowsToExchange`의 `row.role === 'user'` 시딩 — `message.repository.ts` `findUnprocessedExchanges`를 INNER JOIN → LEFT JOIN(message 기준)으로 교체, user row도 COALESCE(mc.content, m.content)/COALESCE(mc.weight, 1)로 포함되게 수정
 - [x] `scheduler.service.ts:99-100` `for (const id in exchanges)` / `exchanges[id]` — `for (const [id, exchange] of exchanges)`로 교체
@@ -20,6 +21,7 @@
 
 ## 다음 작업
 
+- [ ] `analyzeConversation` 결과가 대화는 한국어인데도 영문으로 나오는 문제 — 프롬프트에 언어 지침 강하게 넣어봤는데도 재현됨(모델이 지침 무시). 원인/해결 방향 재검토 필요
 - [ ] memorization 시 전체 메시지 대상 clustering 방식 재검토 — 지금은 summary로 clustering 테스트 중, 제대로 된 방법 찾아야 함
   - 아이디어: `prepareGroup`의 `clusterCentroid`를 매번 새로 LLM 요약(`generateMessageContents`) + 재임베딩하는 대신, 이미 `message_content`(chat 실시간 경로에서 LLM이 한 번 처리한 문장들)의 weighted centroid를 `search_query:` prefix로 재사용 — 어차피 raw 대화 아니라 한 번 처리된 content라 "요약 vs 요약" 비교 성립할 수도 있음. 테스트해볼 가치 있음(정확도 비교 필요)
 

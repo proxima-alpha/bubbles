@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { MessageForBatch, MessageRepository } from '../message/message.repository';
-import {Exchange} from "./scheduler.service";
+import {Injectable} from '@nestjs/common';
+import {ConfigService} from '@nestjs/config';
+import {Prisma} from '@prisma/client';
+import {PrismaService} from '../prisma/prisma.service';
+import {MessageRepository} from '../message/message.repository';
+
+const KEYWORD_WEIGHT_THRESHOLD = 0.5;
 
 export interface BatchMemoryResult {
   id: string;
@@ -13,7 +14,7 @@ export interface BatchMemoryResult {
 }
 
 export interface LlmMemoryAnalysis {
-  keywords: { code: string; name: string }[];
+  keywords: { code: string; name: string, weight?: number }[];
   contents: string[];
   associations?: string[][];
   summary: string;
@@ -67,7 +68,7 @@ function computeScore(
     0.20 * confirmedScore + 0.10 * recency -
     0.10 * m.sensitivity - 0.30 * m.temporary_penalty, // sensitivity weight 0.30 -> 0.10, 임의 선택 — 근거 없음
   );
-  return { confirmedScore, score };
+  return {confirmedScore, score};
 }
 
 @Injectable()
@@ -76,7 +77,8 @@ export class MemoryRepository {
     private prisma: PrismaService,
     private config: ConfigService,
     private messageRepo: MessageRepository,
-  ) {}
+  ) {
+  }
 
   async findSimilarMemory(
     userId: string,
@@ -86,16 +88,19 @@ export class MemoryRepository {
     const rows = await this.prisma.$queryRaw<
       { id: string; version: number; root_memory_id: string | null; content: string | null; similarity: number }[]
     >`
-      SELECT id, version, root_memory_id, content,
-             (1 - (embedding <=> ${`[${vec.join(',')}]`}::vector)) AS similarity
-      FROM memory
-      WHERE user_id = ${userId}::uuid
+        SELECT id,
+               version,
+               root_memory_id,
+               content,
+               (1 - (embedding <=> ${`[${vec.join(',')}]`}::vector)) AS similarity
+        FROM memory
+        WHERE user_id = ${userId}::uuid
         AND type = 'knowledge'
         AND is_active = true
         AND deleted_at IS NULL
         AND embedding IS NOT NULL
-      ORDER BY embedding <=> ${`[${vec.join(',')}]`}::vector
-      LIMIT 1
+        ORDER BY embedding <=> ${`[${vec.join(',')}]`}::vector
+            LIMIT 1
     `;
 
     if (rows.length === 0 || rows[0].similarity < threshold) return null;
@@ -106,16 +111,17 @@ export class MemoryRepository {
     const rows = await this.prisma.$queryRaw<
       { id: string; version: number; content: string | null; similarity: number }[]
     >`
-      SELECT id, version, left(content, 60) AS content,
-             (1 - (embedding <=> ${`[${vec.join(',')}]`}::vector)) AS similarity
-      FROM memory
-      WHERE user_id = ${userId}::uuid
-        AND type = 'knowledge'
-        AND is_active = true
-        AND deleted_at IS NULL
-        AND embedding IS NOT NULL
-      ORDER BY embedding <=> ${`[${vec.join(',')}]`}::vector
-      LIMIT 10
+        SELECT id,
+               version, left (content, 60) AS content, (1 - (embedding <=>
+               ${`[${vec.join(',')}]`}::vector)) AS similarity
+        FROM memory
+        WHERE user_id = ${userId}::uuid
+          AND type = 'knowledge'
+          AND is_active = true
+          AND deleted_at IS NULL
+          AND embedding IS NOT NULL
+        ORDER BY embedding <=> ${`[${vec.join(',')}]`}::vector
+            LIMIT 10
     `;
 
     console.log('[logSimilarMemory]', JSON.stringify(rows, null, 2));
@@ -124,14 +130,14 @@ export class MemoryRepository {
   async saveMemory(
     tx: Prisma.TransactionClient,
     userId: string,
-    { messageIds, centroid, analysis, existingMemory }: SaveArgs,
+    {messageIds, centroid, analysis, existingMemory}: SaveArgs,
   ): Promise<BatchMemoryResult> {
     const maxClusterSize = Number(this.config.get('MAX_CLUSTER_SIZE', 50));
     const clusterSizeScore = Math.min(1, Math.log(1 + messageIds.length) / Math.log(1 + maxClusterSize));
     const importance = clamp(clamp(analysis.importance) + 0.15 * clusterSizeScore);
     const now = new Date();
 
-    const { confirmedScore, score } = computeScore({
+    const {confirmedScore, score} = computeScore({
       importance,
       durability: clamp(analysis.durability),
       reusefulness: clamp(analysis.reusefulness),
@@ -148,14 +154,14 @@ export class MemoryRepository {
       .map((sentence, i) => {
         const raw = (analysis.associations ?? [])[i];
         const messageIds = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
-        return { sentence, messageIds };
+        return {sentence, messageIds};
       })
       .filter(p => p.messageIds.length > 0);
 
     if (existingMemory) {
       await tx.memory.update({
-        where: { id: existingMemory.id },
-        data: { is_active: false, deactivated_at: now },
+        where: {id: existingMemory.id},
+        data: {is_active: false, deactivated_at: now},
       });
     }
 
@@ -183,18 +189,20 @@ export class MemoryRepository {
     });
 
     await tx.$executeRaw`
-      UPDATE memory SET embedding = ${`[${centroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
+        UPDATE memory
+        SET embedding = ${`[${centroid.join(',')}]`}::vector
+        WHERE id = ${newMemory.id}::uuid
     `;
 
     const rootId = newMemory.root_memory_id ?? newMemory.id;
     const evidencedMessageIds = new Set<string>();
 
-    for (const { sentence, messageIds } of validPairs) {
+    for (const {sentence, messageIds} of validPairs) {
       const mc = await tx.memory_content.create({
-        data: { memory_id: newMemory.id, content: sentence },
+        data: {memory_id: newMemory.id, content: sentence},
       });
       await tx.memory_content__message.createMany({
-        data: messageIds.map(mid => ({ memory_content_id: mc.id, message_id: mid })),
+        data: messageIds.map(mid => ({memory_content_id: mc.id, message_id: mid})),
       });
       messageIds.forEach(mid => evidencedMessageIds.add(mid));
     }
@@ -204,24 +212,23 @@ export class MemoryRepository {
     }
 
     const normalizedKeywords = (analysis.keywords ?? [])
-      .map(k => ({ ...k, code: k.code?.toLowerCase() }))
+      .map(k => ({...k, code: k.code?.toLowerCase().replace(/_/g, '-')}))
       .filter(k => k.code && /^[a-z0-9-]+$/.test(k.code));
 
     for (const kw of normalizedKeywords) {
       await tx.$executeRaw`
-        INSERT INTO keyword (code, name) VALUES (${kw.code}, ${kw.name})
-        ON CONFLICT (code) DO NOTHING
+          INSERT INTO keyword (code, name)
+          VALUES (${kw.code}, ${kw.name}) ON CONFLICT (code) DO NOTHING
       `;
       await tx.$executeRaw`
-        INSERT INTO memory__keyword (memory_id, keyword_code)
-        VALUES (${newMemory.id}::uuid, ${kw.code})
-        ON CONFLICT DO NOTHING
+          INSERT INTO memory__keyword (memory_id, keyword_code, weight)
+          VALUES (${newMemory.id}::uuid, ${kw.code}, ${kw.weight ?? 1}) ON CONFLICT DO NOTHING
       `;
     }
 
     await this.messageRepo.markProceededTx(tx, messageIds);
 
-    return { id: newMemory.id, is_pinned: newMemory.is_pinned, score, sensitivity: clamp(analysis.sensitivity) };
+    return {id: newMemory.id, is_pinned: newMemory.is_pinned, score, sensitivity: clamp(analysis.sensitivity)};
   }
 
   // batchIds는 saveMemory 완료 후 생성된 id라 루프 중엔 알 수 없어 별도 단계로 분리됨
@@ -243,12 +250,19 @@ export class MemoryRepository {
       llm_confidence_hint: number; sensitivity: number; temporary_penalty: number;
       last_referenced_at: Date | null; created_at: Date;
     }[]>`
-      SELECT id, embedding::float4[] AS embedding,
-        importance, durability, reusefulness, explicit_signal, repetition_strength,
-        llm_confidence_hint, sensitivity, temporary_penalty,
-        last_referenced_at, created_at
-      FROM memory
-      WHERE user_id = ${userId}::uuid
+        SELECT id,
+               embedding::float4[] AS embedding, importance,
+               durability,
+               reusefulness,
+               explicit_signal,
+               repetition_strength,
+               llm_confidence_hint,
+               sensitivity,
+               temporary_penalty,
+               last_referenced_at,
+               created_at
+        FROM memory
+        WHERE user_id = ${userId}::uuid
         AND type = 'knowledge'
         AND is_active = true
         AND deleted_at IS NULL
@@ -265,37 +279,37 @@ export class MemoryRepository {
       if (maxSim < similarityThreshold) continue;
 
       const repetitionStrength = Math.min(1, Math.max(0, memory.repetition_strength + growthRate * maxSim));
-      const { confirmedScore, score } = computeScore(
-        { ...memory, repetition_strength: repetitionStrength },
+      const {confirmedScore, score} = computeScore(
+        {...memory, repetition_strength: repetitionStrength},
         recencyDecayFactor,
       );
 
       await tx.memory.update({
-        where: { id: memory.id },
-        data: { repetition_strength: repetitionStrength, confirmed_score: confirmedScore, score, scored_at: new Date() },
+        where: {id: memory.id},
+        data: {repetition_strength: repetitionStrength, confirmed_score: confirmedScore, score, scored_at: new Date()},
       });
     }
   }
 
   async findPromotedMemories(userId: string, scoreThreshold: number, sensitivityThreshold: number) {
     const totalActive = await this.prisma.memory.count({
-      where: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
+      where: {user_id: userId, type: 'knowledge', is_active: true, deleted_at: null},
     });
     const topN = Math.max(3, Math.ceil(Math.log2(totalActive + 1))); // 임의 선택 — 근거 없음, 최소 3 보장
 
     const ranked = await this.prisma.memory.findMany({
       where: {
         user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: false,
-        score: { gt: scoreThreshold }, sensitivity: { lte: sensitivityThreshold },
+        score: {gt: scoreThreshold}, sensitivity: {lte: sensitivityThreshold},
       },
-      orderBy: { score: 'desc' },
+      orderBy: {score: 'desc'},
       take: topN,
-      select: { content: true, summary: true },
+      select: {content: true, summary: true},
     });
 
     const pinned = await this.prisma.memory.findMany({
-      where: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: true },
-      select: { content: true, summary: true },
+      where: {user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: true},
+      select: {content: true, summary: true},
     });
 
     return [...ranked, ...pinned];
@@ -303,40 +317,40 @@ export class MemoryRepository {
 
   async findMainMemory(userId: string) {
     return this.prisma.memory.findFirst({
-      where: { user_id: userId, type: 'main', is_active: true, deleted_at: null },
-      select: { id: true, version: true, summary: true, created_at: true },
+      where: {user_id: userId, type: 'main', is_active: true, deleted_at: null},
+      select: {id: true, version: true, summary: true, created_at: true},
     });
   }
 
   async getActiveMainMemory(userId: string): Promise<string | null> {
     const row = await this.prisma.memory.findFirst({
-      where: { user_id: userId, type: 'main', is_active: true, deleted_at: null },
-      select: { summary: true },
+      where: {user_id: userId, type: 'main', is_active: true, deleted_at: null},
+      select: {summary: true},
     });
     return row?.summary ?? null;
   }
 
   async getTopKnowledge(userId: string, embedding: number[], topK: number): Promise<{ id: string; summary: string }[]> {
     const rows = await this.prisma.$queryRaw<{ id: string; summary: string }[]>`
-      SELECT id, summary
-      FROM memory
-      WHERE user_id = ${userId}::uuid
+        SELECT id, summary
+        FROM memory
+        WHERE user_id = ${userId}::uuid
         AND type = 'knowledge'
         AND is_active = true
         AND deleted_at IS NULL
         AND embedding IS NOT NULL
         AND summary IS NOT NULL
-      ORDER BY embedding <=> ${`[${embedding.join(',')}]`}::vector
-      LIMIT ${topK}
+        ORDER BY embedding <=> ${`[${embedding.join(',')}]`}::vector
+            LIMIT ${topK}
     `;
 
     if (rows.length > 0) {
       const ids = rows.map(r => r.id);
       await this.prisma.$executeRaw`
-        UPDATE memory
-        SET last_referenced_at = NOW(),
-            reference_count = reference_count + 1
-        WHERE id = ANY(${ids}::uuid[])
+          UPDATE memory
+          SET last_referenced_at = NOW(),
+              reference_count    = reference_count + 1
+          WHERE id = ANY (${ids}::uuid[])
       `;
     }
 
@@ -345,10 +359,10 @@ export class MemoryRepository {
 
   async getKnowledgeList(userId: string) {
     return this.prisma.memory.findMany({
-      where: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
-      orderBy: { created_at: 'desc' },
+      where: {user_id: userId, type: 'knowledge', is_active: true, deleted_at: null},
+      orderBy: {created_at: 'desc'},
       include: {
-        keywords: { include: { keyword: true } },
+        keywords: {where: {weight: {gte: KEYWORD_WEIGHT_THRESHOLD}}, include: {keyword: true}},
         contents: true,
       },
     });
@@ -356,13 +370,14 @@ export class MemoryRepository {
 
   async getKeywordDashboard(userId: string) {
     return this.prisma.$queryRaw<{ code: string; name: string; frequency: number }[]>`
-      SELECT k.code, k.name, COUNT(*)::int AS frequency
-      FROM memory__keyword mk
-      JOIN keyword k ON k.code = mk.keyword_code
-      JOIN memory m ON m.id = mk.memory_id
-      WHERE m.user_id = ${userId}::uuid AND m.type = 'knowledge' AND m.is_active = true AND m.deleted_at IS NULL
-      GROUP BY k.code, k.name
-      ORDER BY frequency DESC
+        SELECT k.code, k.name, COUNT(*) ::int AS frequency
+        FROM memory__keyword mk
+                 JOIN keyword k ON k.code = mk.keyword_code
+                 JOIN memory m ON m.id = mk.memory_id
+        WHERE m.user_id = ${userId}::uuid AND m.type = 'knowledge' AND m.is_active = true AND m.deleted_at IS NULL
+        AND mk.weight >= ${KEYWORD_WEIGHT_THRESHOLD}
+        GROUP BY k.code, k.name
+        ORDER BY frequency DESC
     `;
   }
 
@@ -370,11 +385,11 @@ export class MemoryRepository {
     return this.prisma.memory.findMany({
       where: {
         user_id: userId, type: 'knowledge', is_active: true, deleted_at: null,
-        keywords: { some: { keyword_code: code } },
+        keywords: {some: {keyword_code: code, weight: {gte: KEYWORD_WEIGHT_THRESHOLD}}},
       },
-      orderBy: { created_at: 'desc' },
+      orderBy: {created_at: 'desc'},
       include: {
-        keywords: { include: { keyword: true } },
+        keywords: {where: {weight: {gte: KEYWORD_WEIGHT_THRESHOLD}}, include: {keyword: true}},
         contents: true,
       },
     });
@@ -382,15 +397,18 @@ export class MemoryRepository {
 
   async findKnowledgeMemory(userId: string, id: string) {
     return this.prisma.memory.findFirst({
-      where: { id, user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
-      include: { keywords: { include: { keyword: true } }, contents: true },
+      where: {id, user_id: userId, type: 'knowledge', is_active: true, deleted_at: null},
+      include: {
+        keywords: {where: {weight: {gte: KEYWORD_WEIGHT_THRESHOLD}}, include: {keyword: true}},
+        contents: true,
+      },
     });
   }
 
   async findMemoryHistory(userId: string, id: string) {
     const target = await this.prisma.memory.findFirst({
-      where: { id, user_id: userId, type: 'knowledge', deleted_at: null },
-      select: { id: true, root_memory_id: true },
+      where: {id, user_id: userId, type: 'knowledge', deleted_at: null},
+      select: {id: true, root_memory_id: true},
     });
     if (!target) return [];
     const rootId = target.root_memory_id ?? target.id;
@@ -398,43 +416,46 @@ export class MemoryRepository {
     return this.prisma.memory.findMany({
       where: {
         user_id: userId, type: 'knowledge', deleted_at: null,
-        OR: [{ id: rootId }, { root_memory_id: rootId }],
+        OR: [{id: rootId}, {root_memory_id: rootId}],
       },
-      orderBy: { version: 'desc' },
-      include: { keywords: { include: { keyword: true } }, contents: true },
+      orderBy: {version: 'desc'},
+      include: {
+        keywords: {where: {weight: {gte: KEYWORD_WEIGHT_THRESHOLD}}, include: {keyword: true}},
+        contents: true,
+      },
     });
   }
 
   async togglePin(userId: string, id: string) {
     const memory = await this.prisma.memory.findFirst({
-      where: { id, user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
+      where: {id, user_id: userId, type: 'knowledge', is_active: true, deleted_at: null},
     });
     if (!memory) return null;
 
     if (!memory.is_pinned) {
       const maxPinned = Number(this.config.get('PIN_MAX_COUNT', 20));
       const pinnedCount = await this.prisma.memory.count({
-        where: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: true },
+        where: {user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: true},
       });
       if (pinnedCount >= maxPinned) throw new Error('PIN_LIMIT_EXCEEDED');
     }
 
     return this.prisma.memory.update({
-      where: { id },
-      data: { is_pinned: !memory.is_pinned },
+      where: {id},
+      data: {is_pinned: !memory.is_pinned},
     });
   }
 
   async updateKnowledgeMemory(userId: string, id: string, contents: string[], summary: string) {
     const existing = await this.prisma.memory.findFirst({
-      where: { id, user_id: userId, type: 'knowledge', is_active: true, deleted_at: null },
+      where: {id, user_id: userId, type: 'knowledge', is_active: true, deleted_at: null},
     });
     if (!existing) return null;
 
     return this.prisma.$transaction(async (tx) => {
       await tx.memory.update({
-        where: { id },
-        data: { is_active: false, deactivated_at: new Date() },
+        where: {id},
+        data: {is_active: false, deactivated_at: new Date()},
       });
 
       const newMemory = await tx.memory.create({
@@ -460,16 +481,20 @@ export class MemoryRepository {
       });
 
       for (const sentence of contents) {
-        await tx.memory_content.create({ data: { memory_id: newMemory.id, content: sentence } });
+        await tx.memory_content.create({data: {memory_id: newMemory.id, content: sentence}});
         // 결정 C: message 근거 연결 없음
       }
       // keyword는 편집 대상이 아니므로 기존 값 그대로 복사 (안 하면 Spec2에서 고친 것과 같은 유실 버그 재발)
       await tx.$executeRaw`
-        INSERT INTO memory__keyword (memory_id, keyword_code)
-        SELECT ${newMemory.id}::uuid, keyword_code FROM memory__keyword WHERE memory_id = ${existing.id}::uuid
-        ON CONFLICT DO NOTHING
+          INSERT INTO memory__keyword (memory_id, keyword_code, weight)
+          SELECT ${newMemory.id}::uuid, keyword_code, weight
+          FROM memory__keyword
+          WHERE memory_id = ${existing.id}::uuid
+          ON CONFLICT DO NOTHING
       `;
-      await tx.$executeRaw`UPDATE memory SET embedding = (SELECT embedding FROM memory WHERE id = ${existing.id}::uuid) WHERE id = ${newMemory.id}::uuid`;
+      await tx.$executeRaw`UPDATE memory
+                           SET embedding = (SELECT embedding FROM memory WHERE id = ${existing.id}::uuid)
+                           WHERE id = ${newMemory.id}::uuid`;
 
       return newMemory;
     });
@@ -481,7 +506,7 @@ export class MemoryRepository {
     const importance = clamp(clamp(analysis.importance) + 0.15 * clusterSizeScore);
     const now = new Date();
 
-    const { confirmedScore, score } = computeScore({
+    const {confirmedScore, score} = computeScore({
       importance,
       durability: clamp(analysis.durability),
       reusefulness: clamp(analysis.reusefulness),
@@ -516,28 +541,29 @@ export class MemoryRepository {
       });
 
       for (const sentence of analysis.contents) {
-        await tx.memory_content.create({ data: { memory_id: newMemory.id, content: sentence } });
+        await tx.memory_content.create({data: {memory_id: newMemory.id, content: sentence}});
         // 결정 C: message 근거 연결 없음
       }
 
       const normalizedKeywords = (analysis.keywords ?? [])
-        .map(k => ({ ...k, code: k.code?.toLowerCase() }))
+        .map(k => ({...k, code: k.code?.toLowerCase().replace(/_/g, '-')}))
         .filter(k => k.code && /^[a-z0-9-]+$/.test(k.code));
 
       for (const kw of normalizedKeywords) {
         await tx.$executeRaw`
-          INSERT INTO keyword (code, name) VALUES (${kw.code}, ${kw.name})
-          ON CONFLICT (code) DO NOTHING
+            INSERT INTO keyword (code, name)
+            VALUES (${kw.code}, ${kw.name}) ON CONFLICT (code) DO NOTHING
         `;
         await tx.$executeRaw`
-          INSERT INTO memory__keyword (memory_id, keyword_code)
-          VALUES (${newMemory.id}::uuid, ${kw.code})
-          ON CONFLICT DO NOTHING
+            INSERT INTO memory__keyword (memory_id, keyword_code, weight)
+            VALUES (${newMemory.id}::uuid, ${kw.code}, ${kw.weight ?? 1}) ON CONFLICT DO NOTHING
         `;
       }
 
       await tx.$executeRaw`
-        UPDATE memory SET embedding = ${`[${embedding.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid
+          UPDATE memory
+          SET embedding = ${`[${embedding.join(',')}]`}::vector
+          WHERE id = ${newMemory.id}::uuid
       `;
 
       return newMemory;
@@ -546,33 +572,37 @@ export class MemoryRepository {
 
   async findForgettingCandidates(scoreThreshold: number, staleDays: number) {
     return this.prisma.$queryRaw<{ user_id: string; id: string }[]>`
-      SELECT user_id, id FROM memory
-      WHERE type = 'knowledge' AND is_active = true AND deleted_at IS NULL
-        AND is_pinned = false AND score < ${scoreThreshold}
-        AND COALESCE(last_referenced_at, created_at) < NOW() - (${staleDays} || ' days')::interval
+        SELECT user_id, id
+        FROM memory
+        WHERE type = 'knowledge'
+          AND is_active = true
+          AND deleted_at IS NULL
+          AND is_pinned = false
+          AND score < ${scoreThreshold}
+          AND COALESCE(last_referenced_at, created_at) < NOW() - (${staleDays} || ' days')::interval
     `;
   }
 
   async deleteKnowledgeMemory(userId: string, id: string) {
     const target = await this.prisma.memory.findFirst({
-      where: { id, user_id: userId, type: 'knowledge', deleted_at: null },
-      select: { id: true, root_memory_id: true },
+      where: {id, user_id: userId, type: 'knowledge', deleted_at: null},
+      select: {id: true, root_memory_id: true},
     });
     if (!target) return null;
     const rootId = target.root_memory_id ?? target.id;
 
     const versionIds = (await this.prisma.memory.findMany({
-      where: { user_id: userId, type: 'knowledge', OR: [{ id: rootId }, { root_memory_id: rootId }] },
-      select: { id: true },
+      where: {user_id: userId, type: 'knowledge', OR: [{id: rootId}, {root_memory_id: rootId}]},
+      select: {id: true},
     })).map(v => v.id);
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.memory_content__message.deleteMany({ where: { memory_content: { memory_id: { in: versionIds } } } });
-      await tx.memory_content.deleteMany({ where: { memory_id: { in: versionIds } } });
-      await tx.memory__keyword.deleteMany({ where: { memory_id: { in: versionIds } } });
+      await tx.memory_content__message.deleteMany({where: {memory_content: {memory_id: {in: versionIds}}}});
+      await tx.memory_content.deleteMany({where: {memory_id: {in: versionIds}}});
+      await tx.memory__keyword.deleteMany({where: {memory_id: {in: versionIds}}});
       await tx.memory.updateMany({
-        where: { id: { in: versionIds } },
-        data: { deleted_at: new Date(), is_active: false, deactivated_at: new Date() },
+        where: {id: {in: versionIds}},
+        data: {deleted_at: new Date(), is_active: false, deactivated_at: new Date()},
       });
 
       // memory_content__message는 N:M이라 message 하나가 다른(삭제 대상 아닌) memory의
@@ -580,8 +610,8 @@ export class MemoryRepository {
       const candidateIds = await this.messageRepo.findIdsByRootMemoryId(tx, rootId);
       const stillReferenced = new Set(
         (await tx.memory_content__message.findMany({
-          where: { message_id: { in: candidateIds } },
-          select: { message_id: true },
+          where: {message_id: {in: candidateIds}},
+          select: {message_id: true},
           distinct: ['message_id'],
         })).map(r => r.message_id),
       );
@@ -590,20 +620,20 @@ export class MemoryRepository {
       await this.messageRepo.resetRootMemoryId(tx, toReset);
     });
 
-    return { id: target.id };
+    return {id: target.id};
   }
 
   async applyDecay() {
     const recencyDecayFactor = Number(this.config.get('RECENCY_DECAY_FACTOR', 30));
     const memories = await this.prisma.memory.findMany({
-      where: { type: 'knowledge', is_active: true, deleted_at: null },
+      where: {type: 'knowledge', is_active: true, deleted_at: null},
     });
     for (const m of memories) {
       const repetitionStrength = Math.min(1, Math.max(0, m.repetition_strength * 0.995));
-      const { confirmedScore, score } = computeScore({ ...m, repetition_strength: repetitionStrength }, recencyDecayFactor);
+      const {confirmedScore, score} = computeScore({...m, repetition_strength: repetitionStrength}, recencyDecayFactor);
       await this.prisma.memory.update({
-        where: { id: m.id },
-        data: { repetition_strength: repetitionStrength, confirmed_score: confirmedScore, score, scored_at: new Date() },
+        where: {id: m.id},
+        data: {repetition_strength: repetitionStrength, confirmed_score: confirmedScore, score, scored_at: new Date()},
       });
     }
   }
@@ -617,8 +647,8 @@ export class MemoryRepository {
     const now = new Date();
     if (existing) {
       await this.prisma.memory.update({
-        where: { id: existing.id },
-        data: { is_active: false, deactivated_at: now },
+        where: {id: existing.id},
+        data: {is_active: false, deactivated_at: now},
       });
     }
     return this.prisma.memory.create({
@@ -635,15 +665,21 @@ export class MemoryRepository {
   }
 
   async findContentMessages(userId: string, contentId: string) {
-    return this.prisma.$queryRaw<{ id: string; role: string; provider: string | null; content: string; created_at: Date }[]>`
-      SELECT m.id, m.role, m.provider, m.content, m.created_at
-      FROM memory_content__message mcm
-      JOIN message m ON m.id = mcm.message_id
-      JOIN memory_content mc ON mc.id = mcm.memory_content_id
-      JOIN memory mem ON mem.id = mc.memory_id
-      WHERE mcm.memory_content_id = ${contentId}::uuid
+    return this.prisma.$queryRaw<{
+      id: string;
+      role: string;
+      provider: string | null;
+      content: string;
+      created_at: Date
+    }[]>`
+        SELECT m.id, m.role, m.provider, m.content, m.created_at
+        FROM memory_content__message mcm
+                 JOIN message m ON m.id = mcm.message_id
+                 JOIN memory_content mc ON mc.id = mcm.memory_content_id
+                 JOIN memory mem ON mem.id = mc.memory_id
+        WHERE mcm.memory_content_id = ${contentId}::uuid
         AND mem.user_id = ${userId}::uuid
-      ORDER BY m.created_at ASC
+        ORDER BY m.created_at ASC
     `;
   }
 
@@ -668,43 +704,33 @@ export class MemoryRepository {
       top2: number | null;
       final_score: number;
     }[]>(`
-      WITH query_embeddings AS (
-        SELECT
-          ordinality - 1       AS content_idx,
-          embedding            AS query_embedding
-        FROM unnest(ARRAY[${embArrayLiteral}]) WITH ORDINALITY AS t(embedding, ordinality)
-      ),
-      scored AS (
-        SELECT
-          qe.content_idx,
-          mc.message_id,
-          1 - (mc.embedding <=> qe.query_embedding) AS similarity,
-          ROW_NUMBER() OVER (
+        WITH query_embeddings AS (SELECT ordinality - 1 AS content_idx,
+                                         embedding      AS query_embedding
+                                  FROM unnest(ARRAY[${embArrayLiteral}]) WITH ORDINALITY AS t(embedding, ordinality)),
+             scored AS (SELECT qe.content_idx,
+                               mc.message_id,
+                               1 - (mc.embedding <=> qe.query_embedding) AS similarity,
+                               ROW_NUMBER()                                 OVER (
             PARTITION BY qe.content_idx, mc.message_id
             ORDER BY mc.embedding <=> qe.query_embedding
           ) AS rn
-        FROM query_embeddings qe
-        CROSS JOIN message_content mc
-        WHERE mc.message_id = ANY(ARRAY[${messageIdList}])
-      ),
-      top2 AS (
-        SELECT
-          content_idx,
-          message_id,
-          MAX(CASE WHEN rn = 1 THEN similarity END) AS top1,
-          MAX(CASE WHEN rn = 2 THEN similarity END) AS top2
-        FROM scored
-        WHERE rn <= 2
-        GROUP BY content_idx, message_id
-      )
-      SELECT
-        content_idx,
-        message_id,
-        top1,
-        top2,
-        CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END AS final_score
-      FROM top2
-      ORDER BY content_idx, final_score DESC
+                        FROM query_embeddings qe
+                                 CROSS JOIN message_content mc
+                        WHERE mc.message_id = ANY (ARRAY[${messageIdList}])),
+             top2 AS (SELECT content_idx,
+                             message_id,
+                             MAX(CASE WHEN rn = 1 THEN similarity END) AS top1,
+                             MAX(CASE WHEN rn = 2 THEN similarity END) AS top2
+                      FROM scored
+                      WHERE rn <= 2
+                      GROUP BY content_idx, message_id)
+        SELECT content_idx,
+               message_id,
+               top1,
+               top2,
+               CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END AS final_score
+        FROM top2
+        ORDER BY content_idx, final_score DESC
     `);
 
     console.log('[logAssociations]', JSON.stringify(rows, (_, v) => typeof v === 'bigint' ? Number(v) : v, 2));
@@ -724,42 +750,32 @@ export class MemoryRepository {
     const messageIdList = messageIds.map(id => `'${id}'::uuid`).join(',');
 
     const rows = await this.prisma.$queryRawUnsafe<{ content_idx: number; message_id: string; final_score: number }[]>(`
-      WITH query_embeddings AS (
-        SELECT
-          ordinality - 1       AS content_idx,
-          embedding            AS query_embedding
-        FROM unnest(ARRAY[${embArrayLiteral}]) WITH ORDINALITY AS t(embedding, ordinality)
-      ),
-      scored AS (
-        SELECT
-          qe.content_idx,
-          mc.message_id,
-          1 - (mc.embedding <=> qe.query_embedding) AS similarity,
-          ROW_NUMBER() OVER (
+        WITH query_embeddings AS (SELECT ordinality - 1 AS content_idx,
+                                         embedding      AS query_embedding
+                                  FROM unnest(ARRAY[${embArrayLiteral}]) WITH ORDINALITY AS t(embedding, ordinality)),
+             scored AS (SELECT qe.content_idx,
+                               mc.message_id,
+                               1 - (mc.embedding <=> qe.query_embedding) AS similarity,
+                               ROW_NUMBER()                                 OVER (
             PARTITION BY qe.content_idx, mc.message_id
             ORDER BY mc.embedding <=> qe.query_embedding
           ) AS rn
-        FROM query_embeddings qe
-        CROSS JOIN message_content mc
-        WHERE mc.message_id = ANY(ARRAY[${messageIdList}])
-      ),
-      top2 AS (
-        SELECT
-          content_idx,
-          message_id,
-          MAX(CASE WHEN rn = 1 THEN similarity END) AS top1,
-          MAX(CASE WHEN rn = 2 THEN similarity END) AS top2
-        FROM scored
-        WHERE rn <= 2
-        GROUP BY content_idx, message_id
-      )
-      SELECT
-        content_idx,
-        message_id,
-        CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END AS final_score
-      FROM top2
-      WHERE CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END >= 0.75
-      ORDER BY content_idx, final_score DESC
+                        FROM query_embeddings qe
+                                 CROSS JOIN message_content mc
+                        WHERE mc.message_id = ANY (ARRAY[${messageIdList}])),
+             top2 AS (SELECT content_idx,
+                             message_id,
+                             MAX(CASE WHEN rn = 1 THEN similarity END) AS top1,
+                             MAX(CASE WHEN rn = 2 THEN similarity END) AS top2
+                      FROM scored
+                      WHERE rn <= 2
+                      GROUP BY content_idx, message_id)
+        SELECT content_idx,
+               message_id,
+               CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END AS final_score
+        FROM top2
+        WHERE CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END >= 0.75
+        ORDER BY content_idx, final_score DESC
     `);
 
     const associations: string[][] = contentEmbeddings.map(() => []);
