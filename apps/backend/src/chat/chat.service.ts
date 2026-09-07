@@ -11,7 +11,7 @@ import {ChatMessageRequest} from "./dto/chat-message-request";
 
 function formatHistory(messages: {role: string; content: string}[]): string {
   return messages.map(m => {
-    const title = m.role === 'user' ? '[질문]' : '[응답]';
+    const title = m.role === 'user' ? '질문:' : '응답:';
     return `${title}\n${m.content}`;
   }).join('\n\n');
 }

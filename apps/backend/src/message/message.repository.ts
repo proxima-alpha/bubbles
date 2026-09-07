@@ -18,6 +18,7 @@ export interface ExchangeRow {
   message_id: string;
   parent_message_id: string | null;
   terms: string[];
+  seq: number | null;
 }
 
 // export interface Exchange {
@@ -116,7 +117,8 @@ export class MessageRepository {
                m.terms,
                m.parent_message_id,
                COALESCE(mc.content, m.content)   AS content,
-               COALESCE(mc.weight, 1)            AS weight
+               COALESCE(mc.weight, 1)            AS weight,
+               mc.seq                            AS seq
         FROM message m
                  LEFT JOIN message_content mc ON mc.message_id = m.id
         WHERE m.user_id = ${userId}::uuid

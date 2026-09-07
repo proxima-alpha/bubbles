@@ -26,10 +26,17 @@ function normalizeWeights(contents: WeightedLabel[]): WeightedLabel[] {
 
 function formatExchanges(exchanges: Exchange[][]) {
   return exchanges.map(array => {
-    return array.map(e => {
-      const title = e.role === 'user' ? '[질문]' : '[응답]'
-      return `${title}\n${e.content}`
-    })
+    const sorted = [...array].sort((a, b) => (a.seq ?? -1) - (b.seq ?? -1));
+    const merged = new Map<string, { role: string; content: string[] }>();
+    for (const e of sorted) {
+      const entry = merged.get(e.message_id) ?? {role: e.role, content: []};
+      entry.content.push(e.content);
+      merged.set(e.message_id, entry);
+    }
+    return Array.from(merged.values()).map(({role, content}) => {
+      const title = role === 'user' ? '질문:' : '응답:';
+      return `${title}\n${content.join(' ')}`;
+    });
   })
 }
 

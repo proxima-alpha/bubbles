@@ -102,12 +102,6 @@ export class SchedulerService {
         } else {
           skippedMessageIds.push(...exchange.map(e => e.message_id));
         }
-        // vectors.push(this.modelService.getAverageCentroid(primeExchanges.map(e => e.embedding)));
-        // const primeExchanges = exchange.sort((a, b) => b.weight - a.weight);
-        // if (primeExchanges.length>=2) {
-        //   ids.push(id);
-        //   vectors.push(this.modelService.getAverageCentroid(primeExchanges.slice(0, 2).map(e => e.embedding)));
-        // }
       }
 
       const clusterResult = await this.runClustering(vectors, ids);
@@ -224,21 +218,6 @@ export class SchedulerService {
     // message_content에 이미 저장된 embedding과 DB에서 직접 vector 비교 (로컬 재계산 없이 재사용)
     return this.memoryRepo.findAssociations(embeddings, messageIds);
   }
-
-  // private async findAssociations(
-  //   exchangeMap: Map<string, ExchangeRow[]>,
-  //   prefix: string = 'search_query: ',
-  // ): Promise<string[][]> {
-  //   const embeddingMap: Map<string, number[]> = new Map();
-  //
-  //   for(const [parent_message_id, exchanges] of exchangeMap) {
-  //     const messageContent = exchanges.map((message) => {message.content}).join('\n');
-  //     const embeddings = await this.modelService.embedText(messageContent, prefix);
-  //     embeddingMap.set(parent_message_id, embeddings)
-  //   }
-  //   // message_content에 이미 저장된 embedding과 DB에서 직접 vector 비교 (로컬 재계산 없이 재사용)
-  //   return this.memoryRepo.findAssociations(embeddingMap);
-  // }
 
   private async runClustering(vectors: number[][], ids: string[]): Promise<{
     clusters: { label: number; ids: string[] }[];
