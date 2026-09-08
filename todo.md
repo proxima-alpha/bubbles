@@ -38,3 +38,6 @@
 - [ ] `memory_content.is_user_defined` 필드 추가 — 유저가 직접 작성/수정한 문장은 시스템(LLM merge/renewal)이 건드리지 못하게 보호. 지금은 merge 시 LLM이 기존 content 전체를 다시 합성하기 때문에, 수동 편집(`history_type='modified'`)한 내용도 다음 배치에서 LLM이 재해석하면서 유실/변형될 수 있음(실제로 구멍 있음, 확인 필요).
   - 구현 방향: merge 시 `is_user_defined=true` 문장은 LLM 재생성 대상에서 제외하고, LLM이 새로 만든 문장들과 무조건 union — LLM한테 "이 문장 그대로 둬"라고 지시만 하는 방식은 신뢰 못 함(LLM이 원문 그대로 재현한다는 보장 없음)
   - 후속 컨셉(트리거 조건 미정): 배치 결과 해당 memory의 content가 전부 `is_user_defined`뿐이면(=시스템이 더 이상 기여할 게 없는 상태) 유저에게 확인시키고 삭제 여부 결정 — 구체적으로 언제/어떻게 감지·알림할지는 미정, 프론트 UI도 필요(Spec 4+ 범위로 추정)
+- [ ] Spec 3 feed-002 결정 E: promotion topN을 기존에는 memory 개수로 해두었지만(`Math.max(3, log2(totalActiveMemory+1))`), memory_content 단위로 바꾸면서 임의로 기존 공식에 `*5`를 곱해두었음 — 실질적인 전략은 추후에 재조정 필요
+- [ ] main memory 삭제/재배치(`saveMainMemory`)가 매번 버전 통째로 비활성화+재생성하는 방식임(`memory.repository.ts:645-674`) — content 자체는 매번 새로 insert되고 seq는 배열 인덱스로 재부여됨. in-place update(해당 row만 UPDATE/DELETE)로 바꿀지는 별도 검토 필요(Spec 3 feed-002 범위 아님)
+- [ ] Spec 3 feed-002 결정 F/I: 망각을 `memory_content.is_active=false`로만 표시하고 실제 row 삭제는 안 하기로 함(버전 이력을 이미 다 남기고 있어서 지금 당장 공간 확보가 급하지 않음). 어느 시점부터 물리 삭제(어떤 조인에도 안 걸린 채 얼마나 오래됐을 때 등)할지는 나중에 별도로 정해야 함
