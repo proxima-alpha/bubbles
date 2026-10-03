@@ -15,21 +15,21 @@
 
 ## 태스크
 
-- [ ] (1) `temporary_penalty`를 `durability`로 통합 (의미 중복 제거)
-- [ ] (2) LLM 분석 출력을 문장(content)별 점수 구조로 변경
-- [ ] (3) DB: `memory`↔`memory_content`를 N:M으로 전환(`memory__memory_content` 조인 테이블 추가, `seq`도 이 테이블로), 점수/문장 embedding 컬럼을 `memory_content`로 이전하고 `memory`에서 제거. **`memory.embedding`(그룹 centroid, merge 판정용)은 제거하지 않고 유지** — `saveMemory`가 새 버전을 만들 때마다 그 버전에 조인된 전체 `memory_content.embedding`의 평균으로 재계산(apply 중 발견: 그룹 centroid와 문장 embedding은 다른 용도라 하나만 남길 수 없었음)
-- [ ] (4) `saveMemory`: 버전 생성 시 기존 content 중 score/staleDays 조건 통과한 것만 조인 추가(forgotten은 제외), 새 문장만 insert
-- [ ] (5) "재언급" 감지를 embedding 검색 기반 count로 교체 (`repetition_strength` 공식 → count)
-- [ ] (6) 승격(promotion): content 단위로 topN 추출
-- [ ] (7) 망각(forgetting): `ForgettingScheduler`가 candidate 있는 memory에 대해 carry-only `saveMemory` 호출을 트리거해서 관계에서 제외 (삭제/플래그 아님)
-- [ ] (8) Decay(`applyDecay`) 대상을 `memory` → `memory_content`로 이전
-- [ ] (9) `memory_content.memory_id` 제거로 깨지는 기존 함수 이전(전부 `memory.repository.ts`):
+- [x] (1) `temporary_penalty`를 `durability`로 통합 (의미 중복 제거)
+- [x] (2) LLM 분석 출력을 문장(content)별 점수 구조로 변경
+- [x] (3) DB: `memory`↔`memory_content`를 N:M으로 전환(`memory__memory_content` 조인 테이블 추가, `seq`도 이 테이블로), 점수/문장 embedding 컬럼을 `memory_content`로 이전하고 `memory`에서 제거. **`memory.embedding`(그룹 centroid, merge 판정용)은 제거하지 않고 유지** — `saveMemory`가 새 버전을 만들 때마다 그 버전에 조인된 전체 `memory_content.embedding`의 평균으로 재계산(apply 중 발견: 그룹 centroid와 문장 embedding은 다른 용도라 하나만 남길 수 없었음)
+- [x] (4) `saveMemory`: 버전 생성 시 기존 content 중 score/staleDays 조건 통과한 것만 조인 추가(forgotten은 제외), 새 문장만 insert
+- [x] (5) "재언급" 감지를 embedding 검색 기반 count로 교체 (`repetition_strength` 공식 → count)
+- [x] (6) 승격(promotion): content 단위로 topN 추출
+- [x] (7) 망각(forgetting): `ForgettingScheduler`가 candidate 있는 memory에 대해 carry-only `saveMemory` 호출을 트리거해서 관계에서 제외 (삭제/플래그 아님)
+- [x] (8) Decay(`applyDecay`) 대상을 `memory` → `memory_content`로 이전
+- [x] (9) `memory_content.memory_id` 제거로 깨지는 기존 함수 이전(전부 `memory.repository.ts`):
   - `getKnowledgeList`(370행)/`getKnowledgeByKeyword`(397행)/`findKnowledgeMemory`(407행)/`findMemoryHistory`(428행) — 전부 `include: {contents: true}`(1:N 관계) 사용 중, N:M 전환되면 이 관계 자체가 없어져서 그대로 깨짐. `memory__memory_content` 조인 거쳐서 `memory_content` 가져오는 `include`/쿼리로 변경 필요 — 조회 API라 마이그레이션 직후 가장 먼저 부딪히는 곳, `deleteKnowledgeMemory`보다 우선순위 높게 처리
   - `importKnowledgeMemory`, `deleteKnowledgeMemory` — `memory_id`로 직접 create/delete하던 부분을 "조인 테이블(`memory__memory_content`) 조회 → `memory_content` 처리" 패턴으로 변경
   - `updateKnowledgeMemory` — 지금처럼 기존 활성 버전 비활성화 + 새 memory row 생성(버전업, history 보존)은 그대로 유지. content 처리만 결정 K대로 문장별 `id` 있고 내용 같으면 기존 row 재사용/`id` 있고 내용 다르면 새 row 생성/`id` 없으면 신규 생성/기존에 있었는데 요청에 없으면 새 버전 조인에서만 제거하는 방식으로 다시 작성
   - `saveMainMemory` — 기존에도 carry 없이 매번 전체 재생성하므로 조회 단계는 필요 없음, `memory_content.create` + `memory__memory_content.create`(seq 포함) 두 단계로 바뀌기만 하면 됨
   - `updateKnowledgeMemory`/`importKnowledgeMemory`가 carry하던 `memory.temporary_penalty`/`llm_confidence_hint`/`confirmed_score` 등 삭제 컬럼 참조도 같이 제거
-- [ ] (10) `analyzeConversation`에서 "기존 기억" 컨텍스트 제거 — `scheduler.service.ts:129`의 `group.existingMemory?.content ?? undefined`를 항상 `undefined`로(재구성 안 함). LLM은 이제 새 메시지만 보고 분석(결정 J 참고). `existingContent` 파라미터가 항상 미사용되므로 `analyzeConversation` 시그니처/prompt 5번 지침 블록 정리는 선택 사항. `ExchangeGroup`/`existingMemory` 타입의 `content` 필드도 같이 정리
+- [x] (10) `analyzeConversation`에서 "기존 기억" 컨텍스트 제거 — `scheduler.service.ts:129`의 `group.existingMemory?.content ?? undefined`를 항상 `undefined`로(재구성 안 함). LLM은 이제 새 메시지만 보고 분석(결정 J 참고). `existingContent` 파라미터가 항상 미사용되므로 `analyzeConversation` 시그니처/prompt 5번 지침 블록 정리는 선택 사항. `ExchangeGroup`/`existingMemory` 타입의 `content` 필드도 같이 정리
 
 ---
 
