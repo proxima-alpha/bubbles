@@ -17,7 +17,7 @@
 
 - [ ] (1) `temporary_penalty`를 `durability`로 통합 (의미 중복 제거)
 - [ ] (2) LLM 분석 출력을 문장(content)별 점수 구조로 변경
-- [ ] (3) DB: `memory`↔`memory_content`를 N:M으로 전환(`memory__memory_content` 조인 테이블 추가, `seq`도 이 테이블로), 점수/embedding 컬럼을 `memory_content`로 이전하고 `memory`에서 제거
+- [ ] (3) DB: `memory`↔`memory_content`를 N:M으로 전환(`memory__memory_content` 조인 테이블 추가, `seq`도 이 테이블로), 점수/문장 embedding 컬럼을 `memory_content`로 이전하고 `memory`에서 제거. **`memory.embedding`(그룹 centroid, merge 판정용)은 제거하지 않고 유지** — `saveMemory`가 새 버전을 만들 때마다 그 버전에 조인된 전체 `memory_content.embedding`의 평균으로 재계산(apply 중 발견: 그룹 centroid와 문장 embedding은 다른 용도라 하나만 남길 수 없었음)
 - [ ] (4) `saveMemory`: 버전 생성 시 기존 content 중 score/staleDays 조건 통과한 것만 조인 추가(forgotten은 제외), 새 문장만 insert
 - [ ] (5) "재언급" 감지를 embedding 검색 기반 count로 교체 (`repetition_strength` 공식 → count)
 - [ ] (6) 승격(promotion): content 단위로 topN 추출
@@ -47,7 +47,7 @@
 | H | `TOP_K` → `TOP_N` 네이밍 통일 | 이번 스펙에서 promotion topN을 새로 도입하면서, 기존 RAG 검색 쪽 `TOP_K` 네이밍과 안 맞음 — `TOP_N`으로 통일. 대상: `.env`의 `RAG_TOP_K` → `RAG_TOP_N`, `memory.repository.ts:337`/`memory.service.ts:18` `getTopKnowledge(..., topK)` 파라미터명 → `topN`. `specs/002/spec.md`는 이미 적용된 과거 기록이라 안 건드림                                                                                                                                              |
 | I | Decay 대상 이전 | `applyDecay`(`memory.repository.ts:630`)가 아직 `memory` 테이블 기준으로 돎 — 점수 필드가 `memory_content`로 이전되므로 이것도 `memory_content`(활성 memory에 조인된 것) 기준으로 바꿔야 함. `repetition_strength *= 0.995` 감쇠 로직은 제거(count는 감쇠 안 함, 5번 참고), recency 기반 score만 재계산해서 `score`/`confirmed_score`/`scored_at` 갱신                                                                                                                                                    |
 | J | `analyzeConversation`의 "기존 기억" 컨텍스트 제거 | `existingMemory.content`를 프롬프트에 안 넘김 — LLM은 **새 메시지만** 보고 분석(`scheduler.service.ts:129`를 항상 `existingContent: undefined`로 호출). 부작용: 지금 prompt 5번 지침("기존 기억 최대한 유지, 중복 내용은 추가 안 함")이 이걸로 동작했는데, 이제 그 지침이 아예 안 붙음 — **같은 memory 그룹 안에서 이미 있는 문장을 LLM이 다시 뽑아내도 막을 방법이 없어짐**(재언급 감지, 5번 섹션은 지금 배치에서 막 만든/건드린 memory는 `excludeMemoryIds`로 제외하기 때문에 같은 memory 내부 중복은 안 잡음, 다른 memory와의 교차 반복만 잡음). 알려진 한계로 `todo.md`에 기록, 필요해지면 재검토 |
-| K | `updateKnowledgeMemory`(유저 수동 편집)의 문장 단위 처리 | 조회 응답(`GET /memory/knowledge/:id`)에 문장마다 `memory_content.id`를 같이 내려주고, 수정 요청(`PUT /memory/knowledge/:id`)도 `contents: { id?: string; text: string }[]`로 받음. **지금 코드처럼 항상 새 memory 버전을 생성**(기존 활성 버전 비활성화 + 새 memory row 생성) — 수동 편집도 하나의 변경 이벤트이므로 history 보존(`plan.md:41`). 그 안에서 content 처리: `id` 있고 `text`가 기존 row와 동일 → 그 row 그대로 재사용(새 버전에 조인만). `id` 있고 `text`가 다름(수정) → **새 `memory_content` row 생성**(embedding 새로 생성, `score`/`repetition_count`는 옛 row 값 그대로 복사해서 재계산 없이 넘김). `last_referenced_at`/`scored_at`은 복사하지 않고 비워둠(null) — `computeScore`의 recency 계산(`memory.repository.ts:64`)이 `last_referenced_at ?? created_at`이라 null이면 새 row의 `created_at`(수정 시점)으로 떨어져서 자동으로 "가장 최근"으로 취급되고, `scored_at`은 다음 `DecayScheduler` 배치(8번, 매일)가 어차피 재계산해서 채우므로 즉시 채울 필요 없음. 새 버전은 이 새 row에 조인(옛 row는 과거 버전에만 남아 그대로 보존 — in-place UPDATE 없음). `id` 없는 항목은 새 `memory_content`로 생성. 기존에 조인돼 있던 문장인데 이번 요청에 그 `id`가 안 왔으면 새 버전 조인에서만 뺌(row 자체·과거 버전 조인은 안 건드림). → Decision C의 "과거 버전 히스토리 불변" 전제, 수동 편집에도 동일하게 유지됨(예외 없음) |
+| K | `updateKnowledgeMemory`(유저 수동 편집)의 문장 단위 처리 | 조회 응답(`GET /memory/knowledge/:id`)에 문장마다 `memory_content.id`를 같이 내려주고, 수정 요청(`PUT /memory/knowledge/:id`)도 `contents: { id?: string; text: string }[]`로 받음. **지금 코드처럼 항상 새 memory 버전을 생성**(기존 활성 버전 비활성화 + 새 memory row 생성) — 수동 편집도 하나의 변경 이벤트이므로 history 보존(`plan.md:41`). 그 안에서 content 처리: `id` 있고 `text`가 기존 row와 동일 → 그 row 그대로 재사용(새 버전에 조인만). `id` 있고 `text`가 다름(수정) → **새 `memory_content` row 생성**(embedding 새로 생성, `score`/`repetition_count`는 옛 row 값 그대로 복사해서 재계산 없이 넘김). `last_referenced_at`/`scored_at`은 복사하지 않고 비워둠(null) — `computeScore`의 recency 계산(`memory.repository.ts:64`)이 `last_referenced_at ?? created_at`이라 null이면 새 row의 `created_at`(수정 시점)으로 떨어져서 자동으로 "가장 최근"으로 취급되고, `scored_at`은 다음 `DecayScheduler` 배치(8번, 매일)가 어차피 재계산해서 채우므로 즉시 채울 필요 없음. 새 버전은 이 새 row에 조인(옛 row는 과거 버전에만 남아 그대로 보존 — in-place UPDATE 없음). `id` 없는 항목은 새 `memory_content`로 생성. 기존에 조인돼 있던 문장인데 이번 요청에 그 `id`가 안 왔으면 새 버전 조인에서만 뺌(row 자체·과거 버전 조인은 안 건드림). → Decision C의 "과거 버전 히스토리 불변" 전제, 수동 편집에도 동일하게 유지됨(예외 없음). **`specs/003/spec.md:208`의 기존 패턴(`UPDATE memory SET embedding = (SELECT embedding FROM memory WHERE id = 기존id)` — 버전 전체의 embedding을 통째로 복사)은 이 Decision으로 대체됨**: 그 패턴은 `memory` 1개 = content 1개였던 시절(embedding이 `memory` 테이블 컬럼) 기준이라 N:M 전환(Decision C) 이후에는 성립하지 않음. 지금은 embedding이 문장 단위 `memory_content.embedding`에 있어서, 바뀐 문장만 재임베딩하고 안 바뀐 문장은 row 재사용으로 비용 없이 넘어감 — "버전 전체를 재임베딩하지 않는다"는 원래 의도(`spec.md:215`)는 그대로 유지되면서, 적용 단위만 memory 전체에서 문장(`memory_content`)으로 내려간 것 |
 
 ---
 
@@ -87,7 +87,7 @@
 
 프롬프트 3번 지침("추출 결과에 대해 점수를 매긴다")을 "각 content 문장마다 점수를 매긴다"로 변경. `associations`는 지금처럼 `contents`와 같은 인덱스로 대응.
 
-`LlmMemoryAnalysis`(`memory.repository.ts:16-28`)의 `importance`/`durability`/`reusefulness`/`sensitivity`/`explicit_signal`/`llm_confidence_hint` 필드는 전부 제거하고 `contents` 배열 안으로 옮김 — 이 필드들은 지금 `schema.prisma`의 `model memory`(현재 128-172행) 컬럼과 1:1로 대응돼서 그대로 저장되고 있는데, 결정 C대로 `memory` 테이블에서 `score`/`sensitivity`/`importance`/`durability`/`reusefulness`/`explicit_signal`/`repetition_strength`/`llm_confidence_hint`/`confirmed_score`/`temporary_penalty`/`embedding`/`content` 12개 컬럼을 실제로 DROP하는 마이그레이션이 나가야 하므로(3번), `LlmMemoryAnalysis` 인터페이스도 그 컬럼들을 채우던 필드를 그대로 남겨두면 안 됨.
+`LlmMemoryAnalysis`(`memory.repository.ts:16-28`)의 `importance`/`durability`/`reusefulness`/`sensitivity`/`explicit_signal`/`llm_confidence_hint` 필드는 전부 제거하고 `contents` 배열 안으로 옮김 — 이 필드들은 지금 `schema.prisma`의 `model memory`(현재 128-172행) 컬럼과 1:1로 대응돼서 그대로 저장되고 있는데, 결정 C대로 `memory` 테이블에서 `score`/`sensitivity`/`importance`/`durability`/`reusefulness`/`explicit_signal`/`repetition_strength`/`llm_confidence_hint`/`confirmed_score`/`temporary_penalty`/`content` 11개 컬럼을 실제로 DROP하는 마이그레이션이 나가야 하므로(3번) — `embedding`(그룹 centroid)은 제거 대상에서 제외됨(apply 중 정정, 3번 참고), `LlmMemoryAnalysis` 인터페이스도 그 컬럼들을 채우던 필드를 그대로 남겨두면 안 됨.
 
 ---
 
@@ -130,7 +130,8 @@ model memory__memory_content {
 
 model memory {
   // score/sensitivity/importance/durability/reusefulness/explicit_signal/
-  // repetition_strength/llm_confidence_hint/confirmed_score/temporary_penalty/embedding 컬럼 제거
+  // repetition_strength/llm_confidence_hint/confirmed_score/temporary_penalty 컬럼 제거
+  // embedding(그룹 centroid)은 유지 — saveMemory가 조인된 content embedding 평균으로 재계산(apply 중 정정)
   // content(join된 문자열) 컬럼도 제거 — 모든 조회를 memory_content join으로 통일하기로 결정
 }
 ```
@@ -213,7 +214,7 @@ $$ LANGUAGE plpgsql;
 
 `ForgettingScheduler.applyForgetting`이 찾는 forgetting candidate 조건: `type='knowledge' AND is_active=true AND deleted_at IS NULL AND is_pinned=false`인 memory 중, 조인된 `memory_content`의 `score < FORGETTING_SCORE_THRESHOLD` AND `COALESCE(last_referenced_at, created_at)`가 `FORGETTING_STALE_DAYS`보다 오래된 것이 하나라도 있는 memory. 실제 쿼리는 `/apply` 시 작성.
 
-candidate로 찾은 활성 memory 각각에 대해 `saveMemory`를 **새 content 없이**(`messageIds: []`, `analysis.contents: []`) 호출 — carry 단계(4번)가 score/staleDays 필터를 적용해서 forgotten된 것만 빠진 새 버전을 만듦. `centroid` UPDATE(`memory.repository.ts:191-195`)는 넘어온 `centroid` 값을 그대로 쓰므로, `ForgettingScheduler.applyForgetting`이 호출할 때 `centroid` 인자로 `existingMemory`의 기존 embedding 값을 그대로 넘기기만 하면 됨(재계산 없이). `markProceededTx`는 4번 결정대로 `saveMemory` 밖으로 옮겨졌으므로 `ForgettingScheduler`는 이 호출 자체를 안 함 — 별도 가드 불필요. 이 새 버전에 조인된 content가 0개면(결정 F) 그 새 버전 memory row만 비활성 처리됨(3번 참고). 배치 주기(cron)는 기존 그대로.
+candidate로 찾은 활성 memory 각각에 대해 `saveMemory`를 **새 content 없이**(`messageIds: []`, `analysis.contents: []`) 호출 — carry 단계(4번)가 score/staleDays 필터를 적용해서 forgotten된 것만 빠진 새 버전을 만듦. 그룹 centroid(`memory.embedding`)는 `saveMemory`가 매번 내부에서 "이 새 버전에 최종 조인된 content embedding 평균"으로 재계산하므로(3번 정정 참고) forgetting 호출 쪽에서 따로 넘길 값 없음 — forgotten content가 빠진 만큼 centroid도 자동으로 그에 맞게 갱신됨. `markProceededTx`는 4번 결정대로 `saveMemory` 밖으로 옮겨졌으므로 `ForgettingScheduler`는 이 호출 자체를 안 함 — 별도 가드 불필요. 이 새 버전에 조인된 content가 0개면(결정 F) 그 새 버전 memory row만 비활성 처리됨(3번 참고). 배치 주기(cron)는 기존 그대로.
 
 실제 `memory_content` row 자체의 물리 삭제(공간 확보)는 이번 스펙 범위 아님 — `todo.md`에 후속 항목으로 기록.
 
@@ -229,4 +230,6 @@ candidate로 찾은 활성 memory 각각에 대해 `saveMemory`를 **새 content
 
 없음 — 이번 feedback으로 전부 결정됨 (C/D: N:M 전환, E: topN 배수 임시값 + todo, 5번: repetition_count 정규화 공식, 3번: memory.content 컬럼 삭제, H: TOP_K→TOP_N 네이밍).
 
-audit 이후 2차 결정: K(`updateKnowledgeMemory`는 항상 새 버전 생성해 history 보존, 수정된 문장은 in-place UPDATE 없이 새 `memory_content` row로 생성), B/F("조인 0개 → soft delete"는 새 버전 row 하나만 비활성 처리, lineage/hard delete 아님, 부모 버전 재활성화 안 함), 2번(`markProceededTx` 호출을 `saveMemory`에서 호출자(`scheduler.service.ts:148`)로 이전 — forgetting 트리거 호출은 이 함수를 아예 안 부르게 됨. `centroid`는 호출부 `ForgettingScheduler.applyForgetting`이 `existingMemory`의 기존 embedding을 그대로 넘기기만 하면 됨), Task 9에 조회 함수 4개(`getKnowledgeList`/`getKnowledgeByKeyword`/`findKnowledgeMemory`/`findMemoryHistory`) 추가. 3차 audit 결정: Section 4의 "새 버전 조인이 이전 버전과 동일" 비교는 기존 memory(해당 lineage 현재 활성 버전)의 content id 집합 기준(순서 무관), `ForgettingScheduler`와 memorize 스케줄러는 동시 실행 금지 — memorize 배치 완료 후 forgetting 배치가 실행되도록 순서 보장(7번 참고). plan.md 점수 공식(42/47행) 동기화는 이번 스펙 적용 마지막 단계로 미룸(`todo.md`).
+audit 이후 2차 결정: K(`updateKnowledgeMemory`는 항상 새 버전 생성해 history 보존, 수정된 문장은 in-place UPDATE 없이 새 `memory_content` row로 생성), B/F("조인 0개 → soft delete"는 새 버전 row 하나만 비활성 처리, lineage/hard delete 아님, 부모 버전 재활성화 안 함), 2번(`markProceededTx` 호출을 `saveMemory`에서 호출자(`scheduler.service.ts:148`)로 이전 — forgetting 트리거 호출은 이 함수를 아예 안 부르게 됨), Task 9에 조회 함수 4개(`getKnowledgeList`/`getKnowledgeByKeyword`/`findKnowledgeMemory`/`findMemoryHistory`) 추가. 3차 audit 결정: Section 4의 "새 버전 조인이 이전 버전과 동일" 비교는 기존 memory(해당 lineage 현재 활성 버전)의 content id 집합 기준(순서 무관), `ForgettingScheduler`와 memorize 스케줄러는 동시 실행 금지 — memorize 배치 완료 후 forgetting 배치가 실행되도록 순서 보장(7번 참고). plan.md 점수 공식(42/47행) 동기화는 이번 스펙 적용 마지막 단계로 미룸(`todo.md`).
+
+**apply 중 정정(구현하며 발견)**: `memory.embedding`(그룹 centroid, merge 판정용)은 Section 3에서 제거 예정이었으나, `scheduler.service.ts`의 `checkMessageFromMemory`→`findSimilarMemory`가 그룹 단위 merge 판정에 이 값을 그대로 쓰고 있어서 제거하면 merge 판정 자체가 불가능해짐 — 제거 대상에서 빼고 유지. 대신 `saveMemory`/`updateKnowledgeMemory`/`importKnowledgeMemory`가 새 버전을 만들 때마다 그 버전에 최종 조인된 `memory_content.embedding` 전체의 평균(`ModelService.getAverageCentroid`)으로 재계산하도록 변경 — 기존에 caller(`scheduler.service.ts`)가 "이번 배치 labels의 centroid"를 넘겨 그대로 저장하던 방식을 대체함. `SaveArgs.centroid` 필드도 이와 함께 제거됨.

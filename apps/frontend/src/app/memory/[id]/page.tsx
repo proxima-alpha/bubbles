@@ -56,7 +56,7 @@ export default function MemoryDetailPage({ params }: { params: { id: string } })
   });
 
   const editMutation = useMutation({
-    mutationFn: ({ id, contents, summary }: { id: string; contents: string[]; summary: string }) =>
+    mutationFn: ({ id, contents, summary }: { id: string; contents: { id?: string; text: string }[]; summary: string }) =>
       api.put(`/memory/knowledge/${id}`, { contents, summary }),
     onSuccess: () => {
       setEditingId(null);
@@ -176,7 +176,7 @@ function EditForm({
 }: {
   version: MemoryVersion;
   onCancel: () => void;
-  onSave: (contents: string[], summary: string) => void;
+  onSave: (contents: { id?: string; text: string }[], summary: string) => void;
   isSaving: boolean;
 }) {
   const [contentsText, setContentsText] = useState(version.contents.map(c => c.content).join('\n'));
@@ -201,7 +201,15 @@ function EditForm({
       <div className="flex gap-2">
         <button
           onClick={() => {
-            const contents = contentsText.split('\n').map(s => s.trim()).filter(Boolean);
+            const lines = contentsText.split('\n').map(s => s.trim()).filter(Boolean);
+            // 텍스트가 원본 content와 그대로 같은 줄만 id를 유지(재사용) — 바뀐 줄/새 줄은 id 없이 전송
+            const remaining = [...version.contents];
+            const contents = lines.map(text => {
+              const matchIdx = remaining.findIndex(c => c.content === text);
+              if (matchIdx === -1) return { text };
+              const [matched] = remaining.splice(matchIdx, 1);
+              return { id: matched.id, text };
+            });
             onSave(contents, summary);
           }}
           disabled={isSaving}

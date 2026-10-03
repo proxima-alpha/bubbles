@@ -10,8 +10,7 @@ import {UserRepository} from '../user/user.repository';
 
 interface ExchangeGroup {
   exchanges: Exchange[][];
-  centroid: number[];
-  existingMemory: { id: string; version: number; root_memory_id: string | null; content: string | null } | null;
+  existingMemory: { id: string; version: number; root_memory_id: string | null } | null;
 }
 
 export interface Exchange extends ExchangeRow {
@@ -126,11 +125,11 @@ export class SchedulerService {
       const existingMessages = group.existingMemory
         ? await this.messageRepo.findMemoryMessages(group.existingMemory.root_memory_id ?? group.existingMemory.id)
         : [];
-      const analysis = await this.systemChatService.analyzeConversation(userId, group.exchanges, group.existingMemory?.content ?? undefined);
+      const analysis = await this.systemChatService.analyzeConversation(userId, group.exchanges);
       if (analysis.contents.length > 0) {
         const allAssistantMessageIds = [...new Set([...existingMessages, ...group.exchanges.flat()].filter(e => e.role != 'user').map(row => row.message_id))];
         const allMessageIds = [...new Set([...existingMessages, ...group.exchanges.flat()].map(row => row.message_id))];
-        const associations = await this.findAssociations(analysis.contents, allAssistantMessageIds);
+        const associations = await this.findAssociations(analysis.contents.map(c => c.text), allAssistantMessageIds);
         pendingSaves.push({...group, analysis: {...analysis, associations}, messageIds: allMessageIds});
       } else {
         skippedMessageIds.push(...group.exchanges.flat().map(e => e.message_id));
@@ -141,13 +140,15 @@ export class SchedulerService {
       await this.messageRepo.markProceeded(skippedMessageIds);
     }
 
-    const allEmbeddings = [...exchanges.values()].flat().map(e => e.embedding);
     return this.prisma.$transaction(async (tx) => {
       const batchResults: BatchMemoryResult[] = [];
       for (const args of pendingSaves) {
-        batchResults.push(await this.memoryRepo.saveMemory(tx, userId, args));
+        const result = await this.memoryRepo.saveMemory(tx, userId, args);
+        batchResults.push(result);
+        await this.messageRepo.markProceededTx(tx, args.messageIds);
       }
-      await this.memoryRepo.updateRepetitionStrength(tx, userId, allEmbeddings, batchResults.map(r => r.id));
+      const allNewContentIds = batchResults.flatMap(r => r.newContentIds);
+      await this.memoryRepo.detectRepetitions(tx, userId, allNewContentIds);
       return batchResults;
     });
   }
@@ -170,7 +171,6 @@ export class SchedulerService {
     for (const sameTarget of byTarget.values()) {
       merged.push({
         exchanges: sameTarget.flatMap(g => g.exchanges),
-        centroid: this.modelService.getAverageCentroid(sameTarget.map(g => g.centroid)),
         existingMemory: sameTarget[0].existingMemory,
       });
     }
@@ -182,7 +182,7 @@ export class SchedulerService {
 
     const labels = await this.systemChatService.generateMessageContents(userId, exchanges);
 
-    // findSimilarMemory 쿼리용 — 저장된 memory.embedding(search_document)에 대응하는 쿼리 벡터
+    // findSimilarMemory 쿼리용 — 저장된 memory.embedding(search_document, saveMemory가 content 평균으로 재계산)에 대응하는 쿼리 벡터
     const queryEmbeddings = await this.modelService.embedTexts(labels.map(l => l.text), 'search_query: ');
     const queryCentroid = this.modelService.getWeightedCentroid(queryEmbeddings, labels.map(l => l.weight));
 
@@ -196,13 +196,8 @@ export class SchedulerService {
       if (existingMessages.length === 0) isMerge = false;
     }
 
-    // memory.embedding으로 저장될 값 — search_document
-    const contentEmbeddings = await this.modelService.embedTexts(labels.map(l => l.text), 'search_document: ');
-    const centroid = this.modelService.getWeightedCentroid(contentEmbeddings, labels.map(l => l.weight));
-
     return {
       exchanges: exchanges,
-      centroid: centroid,
       existingMemory: isMerge ? existingMemory : null,
     };
   }
@@ -239,12 +234,12 @@ export class SchedulerService {
     const scoreThreshold = Number(this.config.get('PROMOTION_SCORE_THRESHOLD', 0.6));
     const sensitivityThreshold = Number(this.config.get('PROMOTION_SENSITIVITY_THRESHOLD', 0.6));
 
-    const promoted = await this.memoryRepo.findPromotedMemories(userId, scoreThreshold, sensitivityThreshold);
+    const promoted = await this.memoryRepo.findPromotedContents(userId, scoreThreshold, sensitivityThreshold);
     if (promoted.length === 0) return;
 
     const existing = await this.memoryRepo.findMainMemory(userId);
 
-    const newKnowledges = promoted.filter(m => m.summary).map(m => m.summary ?? '');
+    const newKnowledges = promoted.map(c => c.content);
 
     if (!existing) {
       await this.memoryRepo.saveMainMemory(userId, newKnowledges, existing);

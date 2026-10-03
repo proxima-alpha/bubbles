@@ -1,13 +1,11 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MemoryRepository } from './memory.repository';
-import { ModelService } from '../model/model.service';
 import { SystemChatService } from '../model/system-chat.service';
 
 @Injectable()
 export class MemoryService {
   constructor(
     private memoryRepo: MemoryRepository,
-    private modelService: ModelService,
     private systemChatService: SystemChatService,
   ) {}
 
@@ -15,8 +13,8 @@ export class MemoryService {
     return this.memoryRepo.getActiveMainMemory(userId);
   }
 
-  async getTopKnowledge(userId: string, embedding: number[], topK: number): Promise<{ id: string; summary: string }[]> {
-    return this.memoryRepo.getTopKnowledge(userId, embedding, topK);
+  async getTopKnowledge(userId: string, embedding: number[], topN: number): Promise<{ id: string; summary: string }[]> {
+    return this.memoryRepo.getTopKnowledge(userId, embedding, topN);
   }
 
   async getKnowledgeList(userId: string) {
@@ -61,7 +59,7 @@ export class MemoryService {
     return this.getMainMemory(userId);
   }
 
-  async updateKnowledge(userId: string, id: string, contents: string[], summary: string) {
+  async updateKnowledge(userId: string, id: string, contents: { id?: string; text: string }[], summary: string) {
     const result = await this.memoryRepo.updateKnowledgeMemory(userId, id, contents, summary);
     if (!result) throw new NotFoundException();
     return this.getKnowledgeDetail(userId, result.id);
@@ -88,20 +86,22 @@ export class MemoryService {
 
   async importKnowledge(userId: string, contents: string[]) {
     const analysis = await this.systemChatService.analyzeImportContent(userId, contents);
-    const content = contents.join('\n');
-    const embedding = await this.modelService.embedText(content);
-    const result = await this.memoryRepo.importKnowledgeMemory(userId, analysis, content, embedding);
+    const result = await this.memoryRepo.importKnowledgeMemory(userId, analysis);
     return this.getKnowledgeDetail(userId, result.id);
   }
 
   async exportKnowledgeById(userId: string, id: string): Promise<string | null> {
     const memory = await this.memoryRepo.findKnowledgeMemory(userId, id);
-    return memory?.content ?? null;
+    if (!memory) return null;
+    return memory.contents.map(c => c.content).join('\n');
   }
 
   async exportAllKnowledge(userId: string): Promise<string> {
     const memories = await this.memoryRepo.getKnowledgeList(userId);
-    return memories.map(m => m.content ?? '').filter(Boolean).join('\n\n---\n\n');
+    return memories
+      .map(m => m.contents.map(c => c.content).join('\n'))
+      .filter(Boolean)
+      .join('\n\n---\n\n');
   }
 
   private formatKnowledge(m: {
