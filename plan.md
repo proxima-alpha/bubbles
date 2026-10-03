@@ -170,10 +170,9 @@ message 임베딩 연동, 스케줄러 기반 exchange 클러스터링 → knowl
 | **knowledge memory** | messages에서 추출한 개별 지식 단위. 임베딩 보유, RAG 검색 대상. md import/export 가능 |
 | **main memory** | user당 1개. knowledge memories를 압축한 단일 텍스트. 항상 컨텍스트에 주입 |
 | **RAG** | Retrieval-Augmented Generation. knowledge memories를 유사도 기반으로 검색해 LLM 프롬프트에 주입하는 방식 |
-| **main memory 승격** | `is_pinned = true OR (score > 0.9 AND sensitivity <= 0.3)` 조건을 만족하는 knowledge memories를 LLM으로 합성한 결과 |
+| **main memory 승격** | knowledge memory의 개별 문장(`memory_content`) 중 `score`/`sensitivity` 임계치를 통과한 상위 topN(memory 개수 기준 로그 공식에 배수 적용, 재조정 예정 — Spec 3 feed-002) + pinned memory의 문장을 LLM으로 합성한 결과 |
 | **license_key** | 유저가 등록한 LLM API 키. provider별로 1개씩 보유하며 해당 provider 호출 시 사용 |
-| **망각 (forgetting)** | knowledge memory를 옵션으로 정리하는 과정. messages는 삭제 없이 영구 보관 |
-| **temporary_penalty** | knowledge memory 생성/merge 시 LLM이 산정하는 점수 (0~1). 장기 기억으로 남길 가치가 낮을수록 높음. "현재 중요성"이 아닌 "휘발성"을 나타냄. 오늘 날씨·일시적 감정 등은 높고, 직업·가치관·반복 패턴 등은 낮음. score 공식에서 패널티로 작용 |
+| **망각 (forgetting)** | knowledge memory의 개별 문장(`memory_content`) 단위로 판정. 삭제가 아니라 다음 memory 버전에 관계(조인)를 안 만드는 방식으로 active 목록에서 제외됨 — 물리 삭제는 별도 후속 과제(Spec 3 feed-002) |
 | **memorize** | 미처리 messages를 클러스터링하여 knowledge memory를 생성/merge하는 과정. 스케줄러 배치의 핵심 단계. |
 
 ---

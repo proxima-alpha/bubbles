@@ -40,4 +40,6 @@
   - 후속 컨셉(트리거 조건 미정): 배치 결과 해당 memory의 content가 전부 `is_user_defined`뿐이면(=시스템이 더 이상 기여할 게 없는 상태) 유저에게 확인시키고 삭제 여부 결정 — 구체적으로 언제/어떻게 감지·알림할지는 미정, 프론트 UI도 필요(Spec 4+ 범위로 추정)
 - [ ] Spec 3 feed-002 결정 E: promotion topN을 기존에는 memory 개수로 해두었지만(`Math.max(3, log2(totalActiveMemory+1))`), memory_content 단위로 바꾸면서 임의로 기존 공식에 `*5`를 곱해두었음 — 실질적인 전략은 추후에 재조정 필요
 - [ ] main memory 삭제/재배치(`saveMainMemory`)가 매번 버전 통째로 비활성화+재생성하는 방식임(`memory.repository.ts:645-674`) — content 자체는 매번 새로 insert되고 seq는 배열 인덱스로 재부여됨. in-place update(해당 row만 UPDATE/DELETE)로 바꿀지는 별도 검토 필요(Spec 3 feed-002 범위 아님)
-- [ ] Spec 3 feed-002 결정 F/I: 망각을 `memory_content.is_active=false`로만 표시하고 실제 row 삭제는 안 하기로 함(버전 이력을 이미 다 남기고 있어서 지금 당장 공간 확보가 급하지 않음). 어느 시점부터 물리 삭제(어떤 조인에도 안 걸린 채 얼마나 오래됐을 때 등)할지는 나중에 별도로 정해야 함
+- [ ] Spec 3 feed-002 결정 F: 망각을 `memory__memory_content` 관계 미생성으로만 표현하고 실제 row 삭제는 안 하기로 함(버전 이력을 이미 다 남기고 있어서 지금 당장 공간 확보가 급하지 않음). 어느 시점부터 물리 삭제(어떤 조인에도 안 걸린 채 얼마나 오래됐을 때 등)할지는 나중에 별도로 정해야 함
+- [ ] Spec 3 feed-002 적용 마지막 단계: plan.md 점수 산정 기준(42행 `temporary_penalty` 항 삭제 + `durability` 0.30 반영), confirmed 공식(47행 `repetition_strength` → `repetition_count` 기반으로 변경) 동기화 — feed-002는 코드/DB만 바꾸고 plan.md 캐노니컬 공식은 그대로 둠, 용어정의(173/175행)만 먼저 갱신된 상태라 지금 plan.md 안에서도 서로 안 맞음
+- [ ] Spec 3 feed-002 결정 J: `analyzeConversation`에서 "기존 기억" 컨텍스트를 빼서 LLM이 새 메시지만 보고 분석하게 됨 — 같은 memory 그룹 안에서 이미 있는 문장을 LLM이 또 뽑아내도 막을 방법이 없어짐(재언급 감지는 다른 memory와의 교차 반복만 잡고, 같은 배치에서 막 만든/건드린 memory는 검색 대상에서 제외됨). 실제로 중복 누적이 문제되면 재검토 필요

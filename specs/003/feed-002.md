@@ -23,6 +23,13 @@
 - [ ] (6) 승격(promotion): content 단위로 topN 추출
 - [ ] (7) 망각(forgetting): `ForgettingScheduler`가 candidate 있는 memory에 대해 carry-only `saveMemory` 호출을 트리거해서 관계에서 제외 (삭제/플래그 아님)
 - [ ] (8) Decay(`applyDecay`) 대상을 `memory` → `memory_content`로 이전
+- [ ] (9) `memory_content.memory_id` 제거로 깨지는 기존 함수 이전(전부 `memory.repository.ts`):
+  - `getKnowledgeList`(370행)/`getKnowledgeByKeyword`(397행)/`findKnowledgeMemory`(407행)/`findMemoryHistory`(428행) — 전부 `include: {contents: true}`(1:N 관계) 사용 중, N:M 전환되면 이 관계 자체가 없어져서 그대로 깨짐. `memory__memory_content` 조인 거쳐서 `memory_content` 가져오는 `include`/쿼리로 변경 필요 — 조회 API라 마이그레이션 직후 가장 먼저 부딪히는 곳, `deleteKnowledgeMemory`보다 우선순위 높게 처리
+  - `importKnowledgeMemory`, `deleteKnowledgeMemory` — `memory_id`로 직접 create/delete하던 부분을 "조인 테이블(`memory__memory_content`) 조회 → `memory_content` 처리" 패턴으로 변경
+  - `updateKnowledgeMemory` — 단순 조회/재생성이 아니라 결정 K대로 문장별 `id` 있으면 in-place UPDATE/없으면 생성/기존에 있었는데 요청에 없으면 조인만 제거하는 방식으로 다시 작성
+  - `saveMainMemory` — 기존에도 carry 없이 매번 전체 재생성하므로 조회 단계는 필요 없음, `memory_content.create` + `memory__memory_content.create`(seq 포함) 두 단계로 바뀌기만 하면 됨
+  - `updateKnowledgeMemory`/`importKnowledgeMemory`가 carry하던 `memory.temporary_penalty`/`llm_confidence_hint`/`confirmed_score` 등 삭제 컬럼 참조도 같이 제거
+- [ ] (10) `analyzeConversation`에서 "기존 기억" 컨텍스트 제거 — `scheduler.service.ts:129`의 `group.existingMemory?.content ?? undefined`를 항상 `undefined`로(재구성 안 함). LLM은 이제 새 메시지만 보고 분석(결정 J 참고). `existingContent` 파라미터가 항상 미사용되므로 `analyzeConversation` 시그니처/prompt 5번 지침 블록 정리는 선택 사항. `ExchangeGroup`/`existingMemory` 타입의 `content` 필드도 같이 정리
 
 ---
 
@@ -31,14 +38,16 @@
 | # | 항목 | 제안                                                                                                                                                                                                                                                                                                                                                                                                  |
 |---|------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | A | `temporary_penalty` 통합 방식 | 필드는 삭제하고 `durability` 하나로 흡수 (프롬프트 정의 자체가 서로 반대 방향 동어반복이었음). score 공식의 `0.25*durability - 0.30*temporary_penalty` 두 항을 `0.30*durability` 하나로 대체 — penalty 쪽이 원래 더 세게 반영됐던 비대칭(0.30 > 0.25)을 유지하려고 0.30 채택. **가중치 숫자 자체는 임의 선택 — 근거 없음**                                                                                                                                                             |
-| B | 버전 생성 단위 | 배치 처리 결과 **실제로 새 문장이 생긴 경우에만** 새 버전 생성. content 제거(forgetting)는 이 흐름과 무관하게 별도 프로세스가 처리하며, 그때는 새 memory 버전을 만들지 않음(F 참고) — 안 건드린 memory는 버전 그대로 (지금 구조도 group→existingMemory 1:1이라 그룹 자체는 이미 이렇게 동작 중, 이번 스펙은 "새 버전의 content 구성 방식"만 바꾸는 것)                                                                                                                                                        |
-| C | `memory`↔`memory_content` 관계 및 새 버전의 content 구성 | 기존 1:N(`memory_content.memory_id`)을 **N:M**으로 변경 — 조인 테이블 `memory__memory_content(memory_id, memory_content_id)` 추가. 새 버전 row 생성 시, 기존 활성(F 참고) `memory_content`는 복사/재배정 없이 **조인 row만 새 버전에 대해 추가**(content 자체는 손 안 댐, id·score·embedding·repetition_count 등 그대로). 신규 문장만 LLM 분석 결과로 새 `memory_content` insert 후 조인. 옛 버전의 조인 row도 그대로 남기 때문에 버전 히스토리가 안 깨짐. "중복 판단"(의미상 겹치는 문장 거르기)은 여전히 LLM이 함 — 완전 보장은 안 됨                          |
+| B | 버전 생성 단위 | 새 버전은 **새 문장이 생겼을 때(chat 배치) 또는 forgotten content가 있을 때(F, ForgettingScheduler)** 생성 — 둘 다 아니면 버전 그대로 유지. `saveMemory` 구현은 이 조건으로 게이팅해야 함(무조건 새 버전 생성 아님). 새 버전 결과 조인된 content가 0개면, 그 새 버전 row 하나만 비활성 처리(F 참고 — lineage 전체나 content는 안 건드림) — 안 건드린 memory는 버전 그대로 (지금 구조도 group→existingMemory 1:1이라 그룹 자체는 이미 이렇게 동작 중, 이번 스펙은 "새 버전의 content 구성 방식"만 바꾸는 것)                                                                                                                                                        |
+| C | `memory`↔`memory_content` 관계 및 새 버전의 content 구성 | 기존 1:N(`memory_content.memory_id`)을 **N:M**으로 변경 — 조인 테이블 `memory__memory_content(memory_id, memory_content_id)` 추가. 새 버전 row 생성 시, 기존 활성(F 참고) `memory_content`는 복사/재배정 없이 **조인 row만 새 버전에 대해 추가**(content 자체는 손 안 댐, id·score·embedding·repetition_count 등 그대로). 신규 문장만 LLM 분석 결과로 새 `memory_content` insert 후 조인. 옛 버전의 조인 row도 그대로 남기 때문에 버전 히스토리가 안 깨짐. **"중복 판단"은 LLM이 안 함(J 참고)** — LLM은 새 메시지만 보고 판단, 같은 memory 안에서의 문장 중복 방지는 이번 스펙에 없음(알려진 한계, `todo.md`)                          |
 | D | carry된 문장의 재언급 count | (C가 N:M으로 바뀌면서 자동 해소됨) 복사/재배정을 안 하므로 애초에 같은 row — count는 그대로 유지됨을 신경 쓸 필요 없음                                                                                                                                                                                                                                                                                                                        |
 | E | 승격(promotion) 대상 | 지금은 `memory.summary`를 승격 재료로 씀 (`scheduler.service.ts:247` `newKnowledges = promoted.map(m => m.summary)`). content 단위로 내리면서 **개별 문장(`memory_content.content`)을 직접 승격 재료로 사용**하도록 변경 — summary 대신 실제 고득점 문장들을 `synthesizeMainMemory`에 넘김. topN은 기존에는 memory 개수로 해두었지만(`Math.max(3, log2(totalActiveMemory+1))`), memory_content 단위로 바꾸면서 임의로 기존 공식에 `*5`를 곱해두었음 — 실질적인 전략은 추후에 재조정 필요(`todo.md` 기록)                                          |
-| F | 망각(forgetting)의 의미 | **별도 컬럼 없이, `memory__memory_content` 관계 존재 여부 자체로 "활성 여부"를 표현.** memory 버전을 이미 전부 이력으로 남기고 있어서, 지금 당장 공간 확보용 삭제는 필요 없음 — 실제 row 삭제(공간 확보)는 나중 문제로 미룸(`todo.md`). 판정(score/staleDays)에 쓰는 필터 로직은 `saveMemory`의 carry 단계(4번)와 동일한 걸 재사용. **`ForgettingScheduler`는 유지** — 매일 대상 memory를 훑어서 forgetting candidate가 있으면, 새 메시지가 없어도 **"새 문장 없이 carry만 하는 saveMemory 호출"**로 새 버전을 만들어 forgotten content의 관계를 새 버전에서 빼버림(그래야 채팅이 뜸한 유저도 시간 지나면 실제로 active 목록에서 빠짐 — 채팅 트리거만 기다리지 않음). 과거 버전의 관계는 안 건드림(히스토리 보존). "새 버전에 조인된 content가 0개면 memory도 soft delete" 로직은 그대로 유지 |
+| F | 망각(forgetting)의 의미 | **별도 컬럼 없이, `memory__memory_content` 관계 존재 여부 자체로 "활성 여부"를 표현.** memory 버전을 이미 전부 이력으로 남기고 있어서, 지금 당장 공간 확보용 삭제는 필요 없음 — 실제 row 삭제(공간 확보)는 나중 문제로 미룸(`todo.md`). 판정(score/staleDays)에 쓰는 필터 로직은 `saveMemory`의 carry 단계(4번)와 동일한 걸 재사용. **`ForgettingScheduler`는 유지** — 매일 대상 memory를 훑어서 forgetting candidate가 있으면, 새 메시지가 없어도 **"새 문장 없이 carry만 하는 saveMemory 호출"**로 새 버전을 만들어 forgotten content의 관계를 새 버전에서 빼버림(그래야 채팅이 뜸한 유저도 시간 지나면 실제로 active 목록에서 빠짐 — 채팅 트리거만 기다리지 않음). 과거 버전의 관계는 안 건드림(히스토리 보존). 이 결과로 만들어진 새 버전에 조인된 content가 0개면, **그 새 버전 memory row 하나만** 비활성 처리(`is_active: false` + `deleted_at: now()`) — Spec 3의 `deleteKnowledgeMemory`(유저 삭제 API, lineage 전체 대상 + content hard delete + message `root_memory_id` 리셋까지 하는 무거운 삭제)는 호출 안 함. 과거 버전들의 content/조인은 그대로 두고, 물리 삭제 없음(hard delete 아님). **부모 버전(`parent_memory_id`) 재활성화 안 함** — `delete_memory_version.sql`(Section 3)의 "활성 버전 삭제되면 부모를 `is_active: true`로 되돌리는" 패턴과는 다른 케이스: 그 패턴은 버전 row 자체를 삭제(lineage 삭제)할 때고, 여기는 새로 만든 빈 버전만 비활성화하는 거라 그 함수를 호출하지 않음 — 부모는 애초에 건드릴 이유가 없음(건드리면 방금 걸러낸 문장이 그대로 조인된 부모가 도로 active로 부활해서 안 됨) |
 | G | keyword/summary | 이번 스펙 범위 아님 — 계속 memory(그룹) 단위 유지. summary는 그룹 전체 요약 표시용으로 남기고, 승격 로직만 content 기반으로 바꿈(E 참고)                                                                                                                                                                                                                                                                                                        |
 | H | `TOP_K` → `TOP_N` 네이밍 통일 | 이번 스펙에서 promotion topN을 새로 도입하면서, 기존 RAG 검색 쪽 `TOP_K` 네이밍과 안 맞음 — `TOP_N`으로 통일. 대상: `.env`의 `RAG_TOP_K` → `RAG_TOP_N`, `memory.repository.ts:337`/`memory.service.ts:18` `getTopKnowledge(..., topK)` 파라미터명 → `topN`. `specs/002/spec.md`는 이미 적용된 과거 기록이라 안 건드림                                                                                                                                              |
 | I | Decay 대상 이전 | `applyDecay`(`memory.repository.ts:630`)가 아직 `memory` 테이블 기준으로 돎 — 점수 필드가 `memory_content`로 이전되므로 이것도 `memory_content`(활성 memory에 조인된 것) 기준으로 바꿔야 함. `repetition_strength *= 0.995` 감쇠 로직은 제거(count는 감쇠 안 함, 5번 참고), recency 기반 score만 재계산해서 `score`/`confirmed_score`/`scored_at` 갱신                                                                                                                                                    |
+| J | `analyzeConversation`의 "기존 기억" 컨텍스트 제거 | `existingMemory.content`를 프롬프트에 안 넘김 — LLM은 **새 메시지만** 보고 분석(`scheduler.service.ts:129`를 항상 `existingContent: undefined`로 호출). 부작용: 지금 prompt 5번 지침("기존 기억 최대한 유지, 중복 내용은 추가 안 함")이 이걸로 동작했는데, 이제 그 지침이 아예 안 붙음 — **같은 memory 그룹 안에서 이미 있는 문장을 LLM이 다시 뽑아내도 막을 방법이 없어짐**(재언급 감지, 5번 섹션은 지금 배치에서 막 만든/건드린 memory는 `excludeMemoryIds`로 제외하기 때문에 같은 memory 내부 중복은 안 잡음, 다른 memory와의 교차 반복만 잡음). 알려진 한계로 `todo.md`에 기록, 필요해지면 재검토 |
+| K | `updateKnowledgeMemory`(유저 수동 편집)의 문장 단위 처리 | 조회 응답(`GET /memory/knowledge/:id`)에 문장마다 `memory_content.id`를 같이 내려주고, 수정 요청(`PUT /memory/knowledge/:id`)도 `contents: { id?: string; text: string }[]`로 받음. 항목별 처리: `id` 있으면 **그 row를 in-place UPDATE**(`content` 교체 + `embedding` 재생성, `score`/`repetition_count`는 재계산 없이 유지) — 수동 편집은 자동 생성(배치)과 달리 "같은 문장의 교정"이므로 새 row로 안 쪼갬. `id` 없는 항목은 새 `memory_content` row 생성. 기존에 조인돼 있던 문장인데 이번 요청에 그 `id`가 안 왔으면 새 버전 조인에서만 뺌(row 자체는 안 지움). **트레이드오프 인지하고 선택**: 이 row가 과거 버전에도 조인돼 있으면 과거 버전 화면에서도 수정된 내용이 그대로 보임(Decision C의 "과거 버전 히스토리 불변" 전제가 수동 편집에는 적용 안 됨) — 유저가 의도적으로 선택한 동작, 과거 시점 그대로 보존은 이번 스펙에서 포기 |
 
 ---
 
@@ -77,6 +86,8 @@
 `contents: string[]` → `contents: { text: string; importance: number; durability: number; reusefulness: number; sensitivity: number; explicit_signal: number; llm_confidence_hint: number }[]`
 
 프롬프트 3번 지침("추출 결과에 대해 점수를 매긴다")을 "각 content 문장마다 점수를 매긴다"로 변경. `associations`는 지금처럼 `contents`와 같은 인덱스로 대응.
+
+`LlmMemoryAnalysis`(`memory.repository.ts:16-28`)의 `importance`/`durability`/`reusefulness`/`sensitivity`/`explicit_signal`/`llm_confidence_hint` 필드는 전부 제거하고 `contents` 배열 안으로 옮김 — 이 필드들은 지금 `schema.prisma`의 `model memory`(현재 128-172행) 컬럼과 1:1로 대응돼서 그대로 저장되고 있는데, 결정 C대로 `memory` 테이블에서 `score`/`sensitivity`/`importance`/`durability`/`reusefulness`/`explicit_signal`/`repetition_strength`/`llm_confidence_hint`/`confirmed_score`/`temporary_penalty`/`embedding`/`content` 12개 컬럼을 실제로 DROP하는 마이그레이션이 나가야 하므로(3번), `LlmMemoryAnalysis` 인터페이스도 그 컬럼들을 채우던 필드를 그대로 남겨두면 안 됨.
 
 ---
 
@@ -141,7 +152,7 @@ BEGIN
   DELETE FROM memory__keyword WHERE memory_id = p_memory_id;
 
   -- 이 버전에서만 쓰이던(다른 버전 조인이 하나도 안 남는) content만 실제 삭제
-  DELETE FROM memory_content_message WHERE memory_content_id IN (
+  DELETE FROM memory_content__message WHERE memory_content_id IN (
     SELECT mmc.memory_content_id FROM memory__memory_content mmc
     WHERE mmc.memory_id = p_memory_id
       AND NOT EXISTS (
@@ -172,106 +183,23 @@ $$ LANGUAGE plpgsql;
 
 ## 4. `saveMemory` — 기존 content 조인 + 신규 insert
 
-의사코드 (N:M 반영, 복사/재배정 없음):
+`existingMemory`가 있으면 그 `memory__memory_content` 조인을 `memory_content` 포함해서 조회하고, 각 content의 `score`/`last_referenced_at`으로 forgetting 조건(`FORGETTING_SCORE_THRESHOLD`/`FORGETTING_STALE_DAYS`, F·7번과 동일 조건: score < threshold AND stale)을 통과 못한 것만 걸러낸 뒤, 나머지를 새 `memory_id`로 조인(`seq`도 그대로 carry, content 자체는 안 건드림). LLM이 새로 낸 문장(`analysis.contents`, 빈 배열이면 이 단계 없음)은 각각 `computeScore`로 점수 계산 후 `memory_content` insert하고 새 버전과 조인, 근거 메시지는 `memory_content__message`로 연결(기존과 동일). 결정 B: 위 두 단계 결과 새 버전의 조인이 이전 버전과 동일하면(carry 전부 survive, 신규 없음) 새 버전 생성 자체를 스킵 — 무조건 생성 아님. **스킵할 땐 기존 `existingMemory` 비활성화(`is_active: false`)도 같이 하지 않음** — 지금 코드가 "existingMemory 있으면 무조건 먼저 비활성화 후 새 버전 생성" 순서라서, 생성만 스킵하고 비활성화는 그대로 두면 그 memory 그룹이 활성 버전 없이 고아가 됨.
 
-```ts
-async saveMemory(tx, userId, {messageIds, centroid, analysis, existingMemory}) {
-  const newMemory = await tx.memory.create({ /* version+1, parent_memory_id 등 기존 그대로 */ });
-
-  // 1. 기존 content 중 forgetting 조건(score/staleDays) 통과한 것만 새 버전과 조인
-  if (existingMemory) {
-    const scoreThreshold = Number(this.config.get('FORGETTING_SCORE_THRESHOLD', 0.2));
-    const staleDays = Number(this.config.get('FORGETTING_STALE_DAYS', 60));
-    const prevJoins = await tx.memory__memory_content.findMany({
-      where: { memory_id: existingMemory.id },
-      include: { memory_content: true },
-    });
-    // LLM이 이미 "기존 기억 최대한 유지, 중복 추가 안 함" 지침에 따라 새 문장만 냈다고 신뢰 —
-    // score 낮고 오래 안 쓰인 것(=findForgettingCandidates와 동일 조건)만 여기서 걸러짐
-    const surviving = prevJoins.filter(j => {
-      const c = j.memory_content;
-      const isStale = Date.now() - (c.last_referenced_at ?? c.created_at).getTime() > staleDays * 86400_000;
-      return !(c.score < scoreThreshold && isStale);
-    });
-    await tx.memory__memory_content.createMany({
-      data: surviving.map(j => ({ memory_id: newMemory.id, memory_content_id: j.memory_content_id, seq: j.seq })),
-    });
-  }
-
-  // 2. 신규 문장만 insert (점수 계산 후) + 새 버전과 조인
-  for (const [i, c] of analysis.contents.entries()) {
-    const {confirmedScore, score} = computeScore({...c, repetition_count: 0, ...}, recencyDecayFactor);
-    const mc = await tx.memory_content.create({ data: { content: c.text, ...점수들, score, confirmed_score: confirmedScore, embedding: contentEmbeddings[i] } });
-    await tx.memory__memory_content.create({ data: { memory_id: newMemory.id, memory_content_id: mc.id } });
-    // memory_content__message insert (associations[i])
-  }
-}
-```
+**`markProceededTx` 호출 위치 이전** — `memory.repository.ts:229`의 `await this.messageRepo.markProceededTx(tx, messageIds);`는 `saveMemory` 밖으로 뺀다. "메시지 처리 끝났다"고 마킹하는 건 `saveMemory`(memory 저장 책임)가 아니라 호출자 책임 — forgetting이 트리거하는 carry 전용 호출(`messageIds: []`)이 `saveMemory` 안에 이 부수효과를 그대로 딸고 오는 구조 자체가 문제. `scheduler.service.ts:148`의 `await this.memoryRepo.saveMemory(tx, userId, args)` 호출 직후 `await this.messageRepo.markProceededTx(tx, args.messageIds)`를 호출자가 직접 하도록 옮김. `ForgettingScheduler.applyForgetting`(7번)은 이 호출을 안 하므로 `saveMemory` 안에 있던 것과 달리 자동으로 안전함(별도 가드 불필요).
 
 ---
 
 ## 5. 재언급(repetition) 감지 — embedding 검색 기반 count
 
-기존 `updateRepetitionStrength`(전체 active memory를 JS로 끌어와 cosine loop)를 pgvector 검색으로 교체:
+기존 `updateRepetitionStrength`(전체 active memory를 JS로 끌어와 cosine loop)를 pgvector 검색으로 교체 — 새 배치의 각 content embedding마다, `user_id`/`is_active`/`deleted_at IS NULL` 조건을 만족하는 memory에 조인된 `memory_content` 중 이번에 새로 만든 memory 자신(`excludeMemoryIds`)은 제외하고, cosine similarity(`1 - (embedding <=> ...)`)가 `REPETITION_SIMILARITY_THRESHOLD` 이상인 것 중 가장 유사한 1건을 pgvector로 검색 — 매칭되면 `repetition_count`를 증가시키고 `last_referenced_at`을 갱신. 실제 쿼리는 `/apply` 시 작성.
 
-```ts
-async incrementMentionCount(tx, userId, contentEmbeddings: number[][], excludeMemoryIds: string[]) {
-  const threshold = Number(this.config.get('REPETITION_SIMILARITY_THRESHOLD', 0.6));
-  for (const emb of contentEmbeddings) {
-    const matched = await tx.$queryRaw<{ id: string }[]>`
-      SELECT mc.id
-      FROM memory_content mc
-      JOIN memory__memory_content mmc ON mmc.memory_content_id = mc.id
-      JOIN memory m ON m.id = mmc.memory_id
-      WHERE m.user_id = ${userId}::uuid AND m.is_active = true AND m.deleted_at IS NULL
-        AND m.id <> ALL(${excludeMemoryIds}::uuid[])
-        AND (1 - (mc.embedding <=> ${`[${emb.join(',')}]`}::vector)) >= ${threshold}
-      ORDER BY mc.embedding <=> ${`[${emb.join(',')}]`}::vector
-      LIMIT 1
-    `;
-    if (matched.length > 0) {
-      await tx.memory_content.update({
-        where: { id: matched[0].id },
-        data: { repetition_count: { increment: 1 }, last_referenced_at: new Date() },
-      });
-      // score 재계산 (아래 정규화 공식으로 confirmed_score 재산출)
-    }
-  }
-}
-```
-
-`repetition_strength`(0~1 연속값, growthRate로 증가) 대신 `repetition_count`(정수, 감쇠 없이 계속 누적)로 저장. `computeScore`에서 쓰던 `repetition_strength` 항은 topN 공식과 같은 스타일로 `log`를 써서 0~1로 정규화:
-
-```ts
-const repetitionNormalized = Math.min(1, Math.log2(repetition_count + 1) / Math.log2(REPETITION_NORM_CAP + 1));
-```
-
-`REPETITION_NORM_CAP`(몇 회 언급되면 1.0에 도달할지)은 **임의 선택 — 근거 없음, 일단 10으로 둠**. count 자체는 감쇠 안 시키고(계속 누적), 시간 경과 반영은 기존처럼 `last_referenced_at` 기반 recency 항이 따로 처리.
+`repetition_strength`(0~1 연속값, growthRate로 증가) 대신 `repetition_count`(정수, 감쇠 없이 계속 누적)로 저장. `computeScore`는 `repetition_count`를 그대로 받아 내부에서 `Math.min(1, Math.log2(repetition_count + 1) / Math.log2(REPETITION_NORM_CAP + 1))`로 정규화(호출부는 별도 정규화 없이 raw count를 넘기면 됨 — 섹션 4/8의 `computeScore(c, ...)` 호출부는 수정 불필요). `REPETITION_NORM_CAP`은 **임의 선택 — 근거 없음, 일단 10**. count 자체는 감쇠 안 시킴. `score`/`confirmed_score` 반영은 즉시 하지 않고 다음 `DecayScheduler` 배치(8번) 때 재계산 — 재언급 직후 즉시 반영이 필요해지면 나중에 재검토.
 
 ---
 
 ## 6. 승격(promotion) — content 단위
 
-```ts
-async findPromotedContents(userId: string, scoreThreshold: number, sensitivityThreshold: number, topN: number) {
-  const ranked = await tx.memory_content.findMany({
-    where: {
-      memory_versions: { some: { memory: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: false } } },
-      score: { gt: scoreThreshold }, sensitivity: { lte: sensitivityThreshold },
-    },
-    orderBy: { score: 'desc' },
-    take: topN,
-    select: { content: true },
-  });
-
-  const pinned = await tx.memory_content.findMany({
-    where: { memory_versions: { some: { memory: { user_id: userId, type: 'knowledge', is_active: true, deleted_at: null, is_pinned: true } } } },
-    select: { content: true },
-  });
-
-  return [...ranked, ...pinned];
-}
-```
+`findPromotedMemories`를 `findPromotedContents(userId, scoreThreshold, sensitivityThreshold, topN)`로 교체 — `memory_content`를 `memory_versions`(조인) 통해 `user_id`/`type: 'knowledge'`/`is_active`/`is_pinned: false`인 것 중 `score > scoreThreshold AND sensitivity <= sensitivityThreshold`로 필터, `score desc`로 topN개 추출(`content`만 select). 별도로 `is_pinned: true`인 memory에 속한 content는 threshold 무관하게 전부 포함. 두 결과를 합쳐서 반환.
 
 `scheduler.service.ts:updateMainMemory`에서 `promoted.map(m => m.summary)` → `promoted.map(c => c.content)`로 변경. `topN`은 결정 E대로 기존 memory 기준 공식 결과값 `* 5`로 둠 (`todo.md`에 재검토 항목 기록).
 
@@ -281,21 +209,9 @@ async findPromotedContents(userId: string, scoreThreshold: number, sensitivityTh
 
 결정 F: 삭제/플래그 세팅 없이, forgotten content는 새 memory 버전을 만들 때 관계(조인 row)만 안 만듦. `ForgettingScheduler`는 채팅이 뜸해서 자연스러운 `saveMemory` 호출이 안 생기는 유저도 시간 지나면 실제로 반영되도록, **새 문장 없이 carry만 하는 `saveMemory` 호출**을 대상 memory에 대해 트리거함.
 
-```ts
-async findMemoriesWithForgettingCandidates(scoreThreshold: number, staleDays: number) {
-  return this.prisma.$queryRaw<{ memory_id: string; user_id: string }[]>`
-    SELECT DISTINCT m.id AS memory_id, m.user_id
-    FROM memory m
-    JOIN memory__memory_content mmc ON mmc.memory_id = m.id
-    JOIN memory_content mc ON mc.id = mmc.memory_content_id
-    WHERE m.type = 'knowledge' AND m.is_active = true AND m.deleted_at IS NULL AND m.is_pinned = false
-      AND mc.score < ${scoreThreshold}
-      AND COALESCE(mc.last_referenced_at, mc.created_at) < NOW() - (${staleDays} || ' days')::interval
-  `;
-}
-```
+`ForgettingScheduler.applyForgetting`이 찾는 forgetting candidate 조건: `type='knowledge' AND is_active=true AND deleted_at IS NULL AND is_pinned=false`인 memory 중, 조인된 `memory_content`의 `score < FORGETTING_SCORE_THRESHOLD` AND `COALESCE(last_referenced_at, created_at)`가 `FORGETTING_STALE_DAYS`보다 오래된 것이 하나라도 있는 memory. 실제 쿼리는 `/apply` 시 작성.
 
-`ForgettingScheduler.applyForgetting`: 위 쿼리로 forgetting candidate를 가진 활성 memory 목록을 찾고, 각각에 대해 `memoryRepo.saveMemory(tx, user_id, { messageIds: [], analysis: { contents: [], associations: [] }, existingMemory })`처럼 **새 content 없이** 호출 — carry 단계(4번)가 score/staleDays 필터를 적용해서 forgotten된 것만 빠진 새 버전을 만듦. `saveMemory`가 `messageIds: []`(신규 근거 메시지 없음) 케이스를 그냥 통과시키는지 확인 필요 — `markProceededTx`/embedding centroid 재계산 등 "새 메시지 있음"을 전제로 한 부분은 스킵하도록 가드 추가해야 할 수 있음(구현 시 확인). "새 버전에 조인된 content가 0개면 memory도 soft delete"(결정 F)는 이 carry 결과 그대로 적용됨. 배치 주기(cron)는 기존 그대로.
+candidate로 찾은 활성 memory 각각에 대해 `saveMemory`를 **새 content 없이**(`messageIds: []`, `analysis.contents: []`) 호출 — carry 단계(4번)가 score/staleDays 필터를 적용해서 forgotten된 것만 빠진 새 버전을 만듦. `centroid` UPDATE(`memory.repository.ts:191-195`)는 넘어온 `centroid` 값을 그대로 쓰므로, `ForgettingScheduler.applyForgetting`이 호출할 때 `centroid` 인자로 `existingMemory`의 기존 embedding 값을 그대로 넘기기만 하면 됨(재계산 없이). `markProceededTx`는 4번 결정대로 `saveMemory` 밖으로 옮겨졌으므로 `ForgettingScheduler`는 이 호출 자체를 안 함 — 별도 가드 불필요. 이 새 버전에 조인된 content가 0개면(결정 F) 그 새 버전 memory row만 비활성 처리됨(3번 참고). 배치 주기(cron)는 기존 그대로.
 
 실제 `memory_content` row 자체의 물리 삭제(공간 확보)는 이번 스펙 범위 아님 — `todo.md`에 후속 항목으로 기록.
 
@@ -303,28 +219,12 @@ async findMemoriesWithForgettingCandidates(scoreThreshold: number, staleDays: nu
 
 ## 8. Decay — content 단위로 이전
 
-```ts
-async applyDecay() {
-  const recencyDecayFactor = Number(this.config.get('RECENCY_DECAY_FACTOR', 30));
-  const contents = await this.prisma.memory_content.findMany({
-    where: {
-      memory_versions: { some: { memory: { type: 'knowledge', is_active: true, deleted_at: null } } },
-    },
-  });
-  for (const c of contents) {
-    const { confirmedScore, score } = computeScore(c, recencyDecayFactor);
-    await this.prisma.memory_content.update({
-      where: { id: c.id },
-      data: { confirmed_score: confirmedScore, score, scored_at: new Date() },
-    });
-  }
-}
-```
-
-기존 `repetition_strength *= 0.995` 감쇠 항 제거(count는 감쇠 안 함, 결정 5번). recency(시간 경과) 부분만 재계산해서 `score`/`confirmed_score`/`scored_at` 갱신 — `DecayScheduler`(`decay.scheduler.ts`, 매일 00:00 UTC) 자체는 그대로 두고 `applyDecay` 내부 대상만 `memory` → `memory_content`로 교체.
+`applyDecay` 대상을 `memory`(active, knowledge)에서 `memory_versions` 조인 통해 active knowledge memory에 걸린 `memory_content` 전체로 변경. 각 content마다 `computeScore`로 재계산 후 `score`/`confirmed_score`/`scored_at` 갱신. 기존 `repetition_strength *= 0.995` 감쇠 항은 제거(count는 감쇠 안 함, 결정 5번) — recency(시간 경과) 부분만 재계산. `DecayScheduler`(`decay.scheduler.ts`, 매일 00:00 UTC) 자체는 그대로, `applyDecay` 내부 대상만 교체.
 
 ---
 
 ## 미해결 (feedback 필요)
 
 없음 — 이번 feedback으로 전부 결정됨 (C/D: N:M 전환, E: topN 배수 임시값 + todo, 5번: repetition_count 정규화 공식, 3번: memory.content 컬럼 삭제, H: TOP_K→TOP_N 네이밍).
+
+audit 이후 2차 결정: K(`updateKnowledgeMemory` 문장별 `id` 기반 수정/생성/삭제 + 내용 바뀐 문장은 embedding 재생성), B/F("조인 0개 → soft delete"는 새 버전 row 하나만 비활성 처리, lineage/hard delete 아님), 2번(`markProceededTx` 호출을 `saveMemory`에서 호출자(`scheduler.service.ts:148`)로 이전 — forgetting 트리거 호출은 이 함수를 아예 안 부르게 됨. `centroid`는 호출부 `ForgettingScheduler.applyForgetting`이 `existingMemory`의 기존 embedding을 그대로 넘기기만 하면 됨). plan.md 점수 공식(42/47행) 동기화는 이번 스펙 적용 마지막 단계로 미룸(`todo.md`).

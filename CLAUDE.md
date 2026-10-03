@@ -7,6 +7,10 @@ Claude Code가 이 프로젝트에서 따라야 할 규칙과 컨텍스트.
 
 ## 코딩 규칙
 
+### 커뮤니케이션 (spec/audit/리뷰 등 문서·대화 전반)
+- 뭔가를 지칭할 때 relative 표현("top-level 필드", "위 부분", "그거") 금지 — absolute 식별자로 지칭할 것: 파일 경로:라인, 테이블명.컬럼명, 인터페이스명.필드명, 함수명 등
+- 예: "top-level 필드 제거" (X) → "`LlmMemoryAnalysis`의 `importance`/`durability`/... 필드 제거" (O)
+
 ### 일반
 - 언어는 **TypeScript** (strict mode)
 - 함수/변수명은 **camelCase**, 클래스는 **PascalCase**
