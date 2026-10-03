@@ -13,18 +13,21 @@ export interface BatchMemoryResult {
   sensitivity: number;
 }
 
-export interface LlmMemoryAnalysis {
-  keywords: { code: string; name: string, weight?: number }[];
-  contents: string[];
-  associations?: string[][];
-  summary: string;
+export interface LlmContentScore {
+  text: string;
   importance: number;
   durability: number;
   reusefulness: number;
   sensitivity: number;
   explicit_signal: number;
   llm_confidence_hint: number;
-  temporary_penalty: number;
+}
+
+export interface LlmMemoryAnalysis {
+  keywords: { code: string; name: string, weight?: number }[];
+  contents: LlmContentScore[];
+  associations?: string[][];
+  summary: string;
 }
 
 export interface SaveArgs {

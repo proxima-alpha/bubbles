@@ -1,6 +1,6 @@
 import {Injectable} from '@nestjs/common';
 import {ModelService} from './model.service';
-import {LlmMemoryAnalysis} from '../memory/memory.repository';
+import {LlmContentScore, LlmMemoryAnalysis} from '../memory/memory.repository';
 import {MessageForBatch} from '../message/message.repository';
 import {Exchange} from "../memory/scheduler.service";
 
@@ -129,49 +129,36 @@ export class SystemChatService {
   async analyzeConversation(
     userId: string,
     exchanges: Exchange[][],
-    existingContent?: string,
   ): Promise<LlmMemoryAnalysis> {
     const inputArray = formatExchanges(exchanges);
-    const blocks: string[] = [
+    const systemPrompt = [
       `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
 - 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
 - 중요: contents[i].text, summary, keywords[i].name은 반드시 [대화]에서 사용된 주요 언어와 동일한 언어로 작성한다.
 - contents[i].text는 [대화]에 등장한, 장기 기억으로 남길 만한 정보를 완결된 평서문으로 표현한 한 문장이다.
 - contents 는 빈 배열일 수 있다.
-- keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)
-- 아래에서 말하는 추출 결과는 contents[i].text 전체 문장의 조합을 말한다.`,
-      `1. 대화에서 장기 기억으로 남길 만한 정보를 완결된 문장으로 추출하여 contents에 할당한다.
+- keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)`,
+      `1. 대화에서 장기 기억으로 남길 만한 정보를 완결된 문장으로 추출하여 contents[i].text에 할당한다.
     . 대화에 실제로 등장한 정보만 사용하고 새로운 사실을 만들지 않는다.
     . 각 문장은 구체적인 주제와 맥락이 드러나도록 서술한다.
     . 여러 도메인에서 다른 의미로 쓰일 수 있는 단어는 현재 문맥의 의미가 드러나게 표현한다.
     . 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
-2. 추출 결과에서 키워드를 추출하고, 각 keyword가 대화 전체를 얼마나 대표하는지 weight를 매긴다.
+2. contents 전체에서 키워드를 추출하고, 각 keyword가 대화 전체를 얼마나 대표하는지 weight를 매긴다.
     . 대표 주제: 0.8~1.0
     . 보조 주제: 0.3 이상 0.8 미만
     . 그 외 주제: 0.0 이상 0.3 미만
-3. 추출 결과에 대해 아래 점수를 0~1로 매긴다.
+3. 각 content 문장마다 아래 점수를 0~1로 매긴다.
     . importance: 사용자 이해에 중요할수록 높음
-    . durability: 시간이 지나도 유효할수록 높음
+    . durability: 시간이 지나도 유효할수록 높음 (날씨·일시적 감정 → 낮음, 직업·가치관·반복 패턴 → 높음)
     . reusefulness: 재활용 가능성이 높을수록 높음
     . sensitivity: 민감 정보일수록 높음
     . explicit_signal: 사용자가 확정적으로 말할수록 높음
     . llm_confidence_hint: 분석 신뢰도가 높을수록 높음
-    . temporary_penalty: 장기 기억 가치가 낮을수록 높음 (날씨·일시적 감정 → 높음, 직업·가치관 → 낮음)
-4. 추출 결과를 한 문장으로 요약하여 summary에 담는다.`,
-    ];
-    if (existingContent) {
-      blocks.push(`5. [기존 기억]을 최대한 유지하고, 대화에서 새롭게 확인된 정보만 추가한다.
-    . 중복 내용은 추가하지 않는다.
-    . 기존 기억과 명백히 충돌하거나 변경된 경우에만 수정한다.
-    . 현재 대화와 관련이 없다는 이유로 기존 기억을 삭제하지 않는다.`);
-    }
-    const systemPrompt = blocks.join('\n\n');
+4. contents 전체를 한 문장으로 요약하여 summary에 담는다.`,
+    ].join('\n\n');
 
-    const dataTextBlocks: string[] = [];
-    if (existingContent) dataTextBlocks.push(`[기존 기억]\n${existingContent}`);
-    dataTextBlocks.push(`[대화]\n${JSON.stringify(inputArray, null, 2)}`);
-    const dataText = dataTextBlocks.join('\n\n');
+    const dataText = `[대화]\n${JSON.stringify(inputArray, null, 2)}`;
 
     const schema = {
       type: 'object',
@@ -193,23 +180,26 @@ export class SystemChatService {
         contents: {
           type: 'array',
           items: {
-            type: 'string',
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              text: {type: 'string'},
+              importance: {type: 'number'},
+              durability: {type: 'number'},
+              reusefulness: {type: 'number'},
+              sensitivity: {type: 'number'},
+              explicit_signal: {type: 'number'},
+              llm_confidence_hint: {type: 'number'},
+            },
+            required: [
+              'text', 'importance', 'durability', 'reusefulness',
+              'sensitivity', 'explicit_signal', 'llm_confidence_hint',
+            ],
           },
         },
         summary: {type: 'string'},
-        importance: {type: 'number'},
-        durability: {type: 'number'},
-        reusefulness: {type: 'number'},
-        sensitivity: {type: 'number'},
-        explicit_signal: {type: 'number'},
-        llm_confidence_hint: {type: 'number'},
-        temporary_penalty: {type: 'number'},
       },
-      required: [
-        'keywords', 'contents', 'summary',
-        'importance', 'durability', 'reusefulness', 'sensitivity',
-        'explicit_signal', 'llm_confidence_hint', 'temporary_penalty',
-      ]
+      required: ['keywords', 'contents', 'summary'],
     };
     const raw = await this.modelService.chat(userId, [
       {role: 'system', content: systemPrompt},
@@ -222,30 +212,42 @@ export class SystemChatService {
   }
 
   async analyzeImportContent(userId: string, contents: string[]): Promise<LlmMemoryAnalysis> {
-    const blocks: string[] = [
+    const systemPrompt = [
       `[정보] 목록을 [지침]에 따라 분석하여 JSON으로 응답하세요.
 [지침]
 - [정보]의 각 항목은 사용자가 직접 작성한 확정된 문장이다. 새로 만들거나 고쳐 쓰지 않는다.
+- scores는 [정보]와 같은 길이의 배열이며, scores[i]는 [정보][i]에 대한 점수다.
 - 중요: keywords[i].name, summary는 반드시 [정보]에서 사용된 주요 언어와 동일한 언어로 작성한다.
 - keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)`,
       `1. [정보] 전체에서 키워드를 추출하고, 각 keyword가 [정보] 전체를 얼마나 대표하는지 weight를 매긴다.
     . 대표 주제: 0.8~1.0
     . 보조 주제: 0.3 이상 0.8 미만
     . 그 외 주제: 0.0 이상 0.3 미만
-2. [정보] 전체에 대해 아래 점수를 0~1로 매긴다.
+2. [정보]의 각 항목마다 scores[i]에 아래 점수를 0~1로 매긴다.
     . importance: 사용자 이해에 중요할수록 높음
-    . durability: 시간이 지나도 유효할수록 높음
+    . durability: 시간이 지나도 유효할수록 높음 (날씨·일시적 감정 → 낮음, 직업·가치관·반복 패턴 → 높음)
     . reusefulness: 재활용 가능성이 높을수록 높음
     . sensitivity: 민감 정보일수록 높음
     . explicit_signal: 사용자가 확정적으로 말할수록 높음
     . llm_confidence_hint: 분석 신뢰도가 높을수록 높음
-    . temporary_penalty: 장기 기억 가치가 낮을수록 높음 (날씨·일시적 감정 → 높음, 직업·가치관 → 낮음)
 3. [정보] 전체를 한 문장으로 요약하여 summary에 담는다.`,
-    ];
-    const systemPrompt = blocks.join('\n\n');
+    ].join('\n\n');
 
     const dataText = `[정보]\n${JSON.stringify(contents, null, 2)}`;
 
+    const scoreSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        importance: {type: 'number'},
+        durability: {type: 'number'},
+        reusefulness: {type: 'number'},
+        sensitivity: {type: 'number'},
+        explicit_signal: {type: 'number'},
+        llm_confidence_hint: {type: 'number'},
+      },
+      required: ['importance', 'durability', 'reusefulness', 'sensitivity', 'explicit_signal', 'llm_confidence_hint'],
+    };
     const schema = {
       type: 'object',
       additionalProperties: false,
@@ -263,20 +265,10 @@ export class SystemChatService {
             required: ['code', 'name', 'weight'],
           },
         },
+        scores: {type: 'array', items: scoreSchema},
         summary: {type: 'string'},
-        importance: {type: 'number'},
-        durability: {type: 'number'},
-        reusefulness: {type: 'number'},
-        sensitivity: {type: 'number'},
-        explicit_signal: {type: 'number'},
-        llm_confidence_hint: {type: 'number'},
-        temporary_penalty: {type: 'number'},
       },
-      required: [
-        'keywords', 'summary',
-        'importance', 'durability', 'reusefulness', 'sensitivity',
-        'explicit_signal', 'llm_confidence_hint', 'temporary_penalty',
-      ],
+      required: ['keywords', 'scores', 'summary'],
     };
 
     const raw = await this.modelService.chat(userId, [
@@ -285,8 +277,16 @@ export class SystemChatService {
     ], undefined, schema);
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
-    const parsed = JSON.parse(jsonMatch[0]) as Omit<LlmMemoryAnalysis, 'contents'>;
-    return {...parsed, contents};
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      keywords: LlmMemoryAnalysis['keywords'];
+      scores: Omit<LlmContentScore, 'text'>[];
+      summary: string;
+    };
+    return {
+      keywords: parsed.keywords,
+      summary: parsed.summary,
+      contents: contents.map((text, i) => ({text, ...parsed.scores[i]})),
+    };
   }
 
   async synthesizeMainMemory(userId: string, existingSummary: string | null, newKnowledges: string[]): Promise<string[]> {
