@@ -135,17 +135,6 @@ model memory {
   history_type_category String    @default("memory_history_type") @db.VarChar
   history_type          String?   @db.VarChar
   version               Int       @default(1)
-  score                 Float     @default(0)
-  sensitivity           Float     @default(0)
-  importance            Float     @default(0)
-  durability            Float     @default(0)
-  reusefulness          Float     @default(0)
-  explicit_signal       Float     @default(0)
-  repetition_strength   Float     @default(0)
-  llm_confidence_hint   Float     @default(0)
-  confirmed_score       Float     @default(0)
-  temporary_penalty     Float     @default(0)
-  content               String?   @db.Text
   summary               String?   @db.Text
   reference_count       Int       @default(0)
   embedding             Unsupported("vector(768)")?
@@ -166,20 +155,41 @@ model memory {
   child_memories memory[] @relation("memory_root")
   parent_memory  memory?  @relation("memory_parent", fields: [parent_memory_id], references: [id])
   newer_memories memory[] @relation("memory_parent")
-  contents       memory_content[]
+  content_joins  memory__memory_content[]
   keywords       memory__keyword[]
   evidence_messages message[] @relation("message_root_memory")
 }
 
 model memory_content {
-  id         String   @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
-  memory_id  String   @db.Uuid
-  content    String   @db.Text
-  seq        Int      @default(0)
-  created_at DateTime @default(now()) @db.Timestamptz
+  id                  String    @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
+  content             String    @db.Text
+  importance          Float     @default(0)
+  durability          Float     @default(0)
+  reusefulness        Float     @default(0)
+  sensitivity         Float     @default(0)
+  explicit_signal     Float     @default(0)
+  llm_confidence_hint Float     @default(0)
+  repetition_count    Int       @default(0)
+  confirmed_score     Float     @default(0)
+  score               Float     @default(0)
+  embedding           Unsupported("vector(768)")?
+  last_referenced_at  DateTime? @db.Timestamptz
+  scored_at           DateTime? @db.Timestamptz
+  created_at          DateTime  @default(now()) @db.Timestamptz
 
-  memory   memory                    @relation(fields: [memory_id], references: [id])
-  messages memory_content__message[]
+  memory_versions memory__memory_content[]
+  messages        memory_content__message[]
+}
+
+model memory__memory_content {
+  memory_id         String @db.Uuid
+  memory_content_id String @db.Uuid
+  seq               Int    @default(0)
+
+  memory         memory         @relation(fields: [memory_id], references: [id])
+  memory_content memory_content @relation(fields: [memory_content_id], references: [id])
+
+  @@id([memory_id, memory_content_id])
 }
 
 model memory_content__message {
