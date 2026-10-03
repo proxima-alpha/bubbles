@@ -39,7 +39,7 @@ function clamp(v: number): number {
   return Math.max(0, Math.min(1, v));
 }
 
-function computeScore(
+export function computeScore(
   c: {
     importance: number; durability: number; reusefulness: number;
     explicit_signal: number; repetition_count: number; llm_confidence_hint: number;
