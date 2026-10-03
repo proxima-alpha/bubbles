@@ -77,14 +77,13 @@ export class MemoryRepository {
     userId: string,
     vec: number[],
     threshold: number,
-  ): Promise<{ id: string; version: number; root_memory_id: string | null; content: string | null } | null> {
+  ): Promise<{ id: string; version: number; root_memory_id: string | null } | null> {
     const rows = await this.prisma.$queryRaw<
-      { id: string; version: number; root_memory_id: string | null; content: string | null; similarity: number }[]
+      { id: string; version: number; root_memory_id: string | null; similarity: number }[]
     >`
         SELECT id,
                version,
                root_memory_id,
-               content,
                (1 - (embedding <=> ${`[${vec.join(',')}]`}::vector)) AS similarity
         FROM memory
         WHERE user_id = ${userId}::uuid
@@ -102,10 +101,10 @@ export class MemoryRepository {
 
   async logSimilarMemory(userId: string, vec: number[]): Promise<void> {
     const rows = await this.prisma.$queryRaw<
-      { id: string; version: number; content: string | null; similarity: number }[]
+      { id: string; version: number; summary: string | null; similarity: number }[]
     >`
         SELECT id,
-               version, left (content, 60) AS content, (1 - (embedding <=>
+               version, summary, (1 - (embedding <=>
                ${`[${vec.join(',')}]`}::vector)) AS similarity
         FROM memory
         WHERE user_id = ${userId}::uuid
