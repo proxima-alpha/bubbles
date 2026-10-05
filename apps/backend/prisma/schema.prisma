@@ -182,9 +182,10 @@ model memory_content {
 }
 
 model memory__memory_content {
-  memory_id         String @db.Uuid
-  memory_content_id String @db.Uuid
-  seq               Int    @default(0)
+  memory_id         String   @db.Uuid
+  memory_content_id String   @db.Uuid
+  seq               Int      @default(0)
+  created_at        DateTime @default(now()) @db.Timestamptz
 
   memory         memory         @relation(fields: [memory_id], references: [id])
   memory_content memory_content @relation(fields: [memory_content_id], references: [id])

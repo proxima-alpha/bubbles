@@ -248,7 +248,7 @@ export class MemoryRepository {
     }
 
     const normalizedKeywords = (analysis.keywords ?? [])
-      .map(k => ({...k, code: k.code?.toLowerCase().replace(/_/g, '-')}))
+      .map(k => ({...k, code: k.code?.toLowerCase().replace(/_/g, '-'), name: k.name?.replace(/_/g, ' ')}))
       .filter(k => k.code && /^[a-z0-9-]+$/.test(k.code));
 
     for (const kw of normalizedKeywords) {
@@ -639,7 +639,7 @@ export class MemoryRepository {
       }
 
       const normalizedKeywords = (analysis.keywords ?? [])
-        .map(k => ({...k, code: k.code?.toLowerCase().replace(/_/g, '-')}))
+        .map(k => ({...k, code: k.code?.toLowerCase().replace(/_/g, '-'), name: k.name?.replace(/_/g, ' ')}))
         .filter(k => k.code && /^[a-z0-9-]+$/.test(k.code));
 
       for (const kw of normalizedKeywords) {
@@ -815,11 +815,11 @@ export class MemoryRepository {
       content: string;
       created_at: Date
     }[]>`
-        SELECT m.id, m.role, m.provider, m.content, m.created_at
+        SELECT DISTINCT m.id, m.role, m.provider, m.content, m.created_at
         FROM memory_content__message mcm
                  JOIN message m ON m.id = mcm.message_id
-                 JOIN memory_content mc ON mc.id = mcm.memory_content_id
-                 JOIN memory mem ON mem.id = mc.memory_id
+                 JOIN memory__memory_content mmc ON mmc.memory_content_id = mcm.memory_content_id
+                 JOIN memory mem ON mem.id = mmc.memory_id
         WHERE mcm.memory_content_id = ${contentId}::uuid
         AND mem.user_id = ${userId}::uuid
         ORDER BY m.created_at ASC
