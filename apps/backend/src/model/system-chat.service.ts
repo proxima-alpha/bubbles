@@ -48,24 +48,29 @@ export class SystemChatService {
   private messageContentRule = `
 [지침]
 - contents[i].text는 대화에 등장한, 장기 기억으로 남길 만한 정보를 완결된 평서문으로 표현한 한 문장이다.
-- contents는 빈 배열일 수 있다.
-- 원문의 언어를 선호한다.
+- 추출할 정보가 없으면 반드시 contents는 빈 배열을 반환한다.
+- contents의 언어는 원문의 언어를 선호한다.
 - 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
+- 아래에 해당하는 나온 정보 contents에 포함하지 않는다.
+  - (AI assistant의) 인사
+  - (AI assistant의) 자기소개, 자신의 역할·능력·기능에 대한 설명
+  - (AI assistant의) 도움을 제공하겠다는 안내·제안·포부
+  - (AI assistant의) 맞장구, 추임새
 1. 대화에서 장기 기억으로 남길 만한 정보를 완결된 문장으로 추출한다.
     . 대화에 실제로 등장한 정보만 사용하고 새로운 사실을 만들지 않는다.
     . 각 문장은 구체적인 주제와 맥락이 드러나도록 서술한다.
     . 여러 도메인에서 다른 의미로 쓰일 수 있는 단어는 현재 문맥의 의미가 드러나게 표현한다.
     . 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
 2. 각 문장이 전체 주제를 얼마나 대표하는지 weight를 0~1로 매긴다.
-    . 대표 주제: 0.8~1.0
+    . 대표 주제: 0.8 이상 1.0 이하
     . 보조 주제: 0.3 이상 0.8 미만
     . 그 외 주제: 0.0 이상 0.3 미만
 `
 
   async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<WeightedLabel[]> {
-    const systemPrompt = `Analyze [Question] and [Response] according to the instructions below and return the result as JSON.${this.messageContentRule}`
+    const systemPrompt = `[질문]과 [응답]을 아래 지시사항에 따라 분석하고 결과를 JSON으로 반환하라.${this.messageContentRule}`
 
-    const dataText = `[Question]\n${questionContent}\n\n[Response]\n${answerContent}`
+    const dataText = `[질문]\n${questionContent}\n\n[응답]\n${answerContent}`
 
     const raw = await this.modelService.chat(userId, [
       {role: 'system', content: systemPrompt},
@@ -89,16 +94,16 @@ export class SystemChatService {
       required: ['contents'],
     });
 
-    const {contents} = JSON.parse(raw) as { contents: { text: string; weight: number }[] };
+    const {contents} = JSON.parse(raw) as { contents: WeightedLabel[] };
     return contents;
   }
 
   async generateMessageContents(userId: string, exchanges: Exchange[][]): Promise<WeightedLabel[]> {
     const inputArray = formatExchanges(exchanges);
 
-    const systemPrompt = `Analyze [Conversation] according to the instructions below and return the result as JSON.${this.messageContentRule}`
+    const systemPrompt = `[대화]를 아래 지시사항에 따라 분석하고 결과를 JSON으로 반환하라.${this.messageContentRule}`
 
-    const dataText = `[Conversation]\n${JSON.stringify(inputArray, null, 2)}`
+    const dataText = `[대화]\n${JSON.stringify(inputArray, null, 2)}`
 
     const raw = await this.modelService.chat(userId, [
       {role: 'system', content: systemPrompt,},
@@ -122,7 +127,7 @@ export class SystemChatService {
       required: ['contents'],
     });
 
-    const {contents} = JSON.parse(raw) as { contents: { text: string; weight: number }[] };
+    const {contents} = JSON.parse(raw) as { contents: WeightedLabel[] };
     return contents;
   }
 
