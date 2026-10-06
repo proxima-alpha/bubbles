@@ -68,6 +68,14 @@ export class MessageRepository {
     );
   }
 
+  async updateMessageTopicLabels(messageId: string, topicLabels: string[]) {
+    await this.prisma.$executeRaw`
+        UPDATE message
+        SET topic_labels = ${topicLabels}::text[]
+        WHERE id = ${messageId}::uuid
+    `;
+  }
+
   async findRecentMessages(userId: string, take: number) {
     return this.prisma.$queryRaw<{ id: string; role: string; content: string; created_at: Date }[]>`
         WITH recent_exchange AS (SELECT id
@@ -103,6 +111,7 @@ export class MessageRepository {
       where: {
         role: 'assistant',
         parent_message_id: {not: null},
+        is_proceeded: false,
         message_contents: {none: {}},
       },
       include: {parent_message: true},

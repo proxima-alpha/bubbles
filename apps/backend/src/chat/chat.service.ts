@@ -112,7 +112,7 @@ export class ChatService {
   }
 
   async generateMessageContents(userId: string, question: MessageContent, answer: MessageContent) {
-    const contents = await this.systemChatService.generateMessageContent(userId, question.content, answer.content);
+    const {contents, topicLabels} = await this.systemChatService.generateMessageContent(userId, question.content, answer.content);
     if (contents.length === 0) return;
 
     const questionEmbeddings = await this.modelService.embedText(question.content, 'search_document: ');
@@ -132,5 +132,7 @@ export class ChatService {
         embedding: answerEmbeddings[seq]
       })),
     );
+
+    await this.messageRepo.updateMessageTopicLabels(answer.id, topicLabels);
   }
 }

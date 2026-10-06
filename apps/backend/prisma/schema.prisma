@@ -91,6 +91,7 @@ model message {
   model             String?                    @db.VarChar
   content           String                     @db.Text
   terms             String[]
+  topic_labels      String[]                   @default([])
   input_tokens      Int?
   output_tokens     Int?
   parent_message_id String?                    @db.Uuid

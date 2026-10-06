@@ -180,7 +180,10 @@ export class SchedulerService {
   private async checkMessageFromMemory(userId: string, exchanges: Exchange[][]): Promise<ExchangeGroup> {
     const mergeMaxSimilarity = Number(this.config.get('MERGE_MAX_SIMILARITY', 0.9));
 
-    const labels = await this.systemChatService.generateMessageContents(userId, exchanges);
+    const {contents: labels} = await this.systemChatService.generateMessageContents(userId, exchanges);
+    if (labels.length === 0) {
+      return {exchanges: exchanges, existingMemory: null};
+    }
 
     // findSimilarMemory 쿼리용 — 저장된 memory.embedding(search_document, saveMemory가 content 평균으로 재계산)에 대응하는 쿼리 벡터
     const queryEmbeddings = await this.modelService.embedTexts(labels.map(l => l.text), 'search_query: ');

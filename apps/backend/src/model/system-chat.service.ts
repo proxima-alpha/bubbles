@@ -47,15 +47,17 @@ export class SystemChatService {
 
   private messageContentRule = `
 [지침]
-- contents[i].text는 대화에 등장한, 장기 기억으로 남길 만한 정보를 완결된 평서문으로 표현한 한 문장이다.
-- 추출할 정보가 없으면 반드시 contents는 빈 배열을 반환한다.
-- contents의 언어는 원문의 언어를 선호한다.
 - 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
-- 아래에 해당하는 나온 정보 contents에 포함하지 않는다.
+- 아래에 해당하는 나온 정보는 contents에 포함하지 않는다.
   - (AI assistant의) 인사
   - (AI assistant의) 자기소개, 자신의 역할·능력·기능에 대한 설명
   - (AI assistant의) 도움을 제공하겠다는 안내·제안·포부
   - (AI assistant의) 맞장구, 추임새
+- contents[i].text는 대화에 등장한, 장기 기억으로 남길 만한 정보를 완결된 평서문으로 표현한 한 문장이다.
+- 추출할 정보가 없으면 contents는 빈 배열을 반환한다.
+- contents 의 각 문장에는 주어를 포함하고 문맥에 독립적으로 표현한다.
+- contents, topicLabels 의 언어는 원문의 언어를 선호한다.
+- topicLabels 에는 각 주요 키워드만 추출하여 저장한다.
 1. 대화에서 장기 기억으로 남길 만한 정보를 완결된 문장으로 추출한다.
     . 대화에 실제로 등장한 정보만 사용하고 새로운 사실을 만들지 않는다.
     . 각 문장은 구체적인 주제와 맥락이 드러나도록 서술한다.
@@ -65,9 +67,10 @@ export class SystemChatService {
     . 대표 주제: 0.8 이상 1.0 이하
     . 보조 주제: 0.3 이상 0.8 미만
     . 그 외 주제: 0.0 이상 0.3 미만
+3. 전체 문장에 대하여 핵심 키워드를 topicLabels로 추출한다
 `
 
-  async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<WeightedLabel[]> {
+  async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<{ contents: WeightedLabel[]; topicLabels: string[] }> {
     const systemPrompt = `[질문]과 [응답]을 아래 지시사항에 따라 분석하고 결과를 JSON으로 반환하라.${this.messageContentRule}`
 
     const dataText = `[질문]\n${questionContent}\n\n[응답]\n${answerContent}`
@@ -90,15 +93,21 @@ export class SystemChatService {
             required: ['text', 'weight'],
           },
         },
+        topicLabels: {
+          type: 'array',
+          items: {
+            type: 'string',
+          },
+        }
       },
       required: ['contents'],
     });
 
-    const {contents} = JSON.parse(raw) as { contents: WeightedLabel[] };
-    return contents;
+    const {contents, topicLabels} = JSON.parse(raw) as { contents: WeightedLabel[]; topicLabels?: string[] };
+    return {contents, topicLabels: topicLabels ?? []};
   }
 
-  async generateMessageContents(userId: string, exchanges: Exchange[][]): Promise<WeightedLabel[]> {
+  async generateMessageContents(userId: string, exchanges: Exchange[][]): Promise<{ contents: WeightedLabel[]; topicLabels: string[] }> {
     const inputArray = formatExchanges(exchanges);
 
     const systemPrompt = `[대화]를 아래 지시사항에 따라 분석하고 결과를 JSON으로 반환하라.${this.messageContentRule}`
@@ -123,12 +132,18 @@ export class SystemChatService {
             required: ['text', 'weight'],
           },
         },
+        topicLabels: {
+          type: 'array',
+          items: {
+            type: 'string',
+          },
+        },
       },
       required: ['contents'],
     });
 
-    const {contents} = JSON.parse(raw) as { contents: WeightedLabel[] };
-    return contents;
+    const {contents, topicLabels} = JSON.parse(raw) as { contents: WeightedLabel[]; topicLabels?: string[] };
+    return {contents, topicLabels: topicLabels ?? []};
   }
 
   async analyzeConversation(
@@ -142,8 +157,8 @@ export class SystemChatService {
 - 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
 - 중요: contents[i].text, summary, keywords[i].name은 반드시 [대화]에서 사용된 주요 언어와 동일한 언어로 작성한다.
 - contents[i].text는 [대화]에 등장한, 장기 기억으로 남길 만한 정보를 완결된 평서문으로 표현한 한 문장이다.
-- contents 는 빈 배열일 수 있다.
-- keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)`,
+- keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)
+- 추출할 정보가 없으면 반드시 contents는 빈 배열을 반환한다.`,
       `1. 대화에서 장기 기억으로 남길 만한 정보를 완결된 문장으로 추출하여 contents[i].text에 할당한다.
     . 대화에 실제로 등장한 정보만 사용하고 새로운 사실을 만들지 않는다.
     . 각 문장은 구체적인 주제와 맥락이 드러나도록 서술한다.
@@ -153,7 +168,7 @@ export class SystemChatService {
     . 대표 주제: 0.8~1.0
     . 보조 주제: 0.3 이상 0.8 미만
     . 그 외 주제: 0.0 이상 0.3 미만
-3. 각 content 문장마다 아래 점수를 0~1로 매긴다.
+3. 각 contents 문장마다 아래 점수를 0~1로 매긴다.
     . importance: 사용자 이해에 중요할수록 높음
     . durability: 시간이 지나도 유효할수록 높음 (날씨·일시적 감정 → 낮음, 직업·가치관·반복 패턴 → 높음)
     . reusefulness: 재활용 가능성이 높을수록 높음
