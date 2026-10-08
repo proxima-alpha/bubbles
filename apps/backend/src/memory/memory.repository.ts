@@ -32,7 +32,13 @@ export interface LlmMemoryAnalysis {
 export interface SaveArgs {
   messageIds: string[];
   analysis: LlmMemoryAnalysis;
-  existingMemory: { id: string; version: number; root_memory_id: string | null } | null;
+  existingMemory: MemoryResult | null;
+}
+
+export interface MemoryResult {
+  id: string;
+  version: number;
+  root_memory_id: string | null
 }
 
 function clamp(v: number): number {
@@ -77,7 +83,7 @@ export class MemoryRepository {
     userId: string,
     vec: number[],
     threshold: number,
-  ): Promise<{ id: string; version: number; root_memory_id: string | null } | null> {
+  ): Promise<MemoryResult | null> {
     const rows = await this.prisma.$queryRaw<
       { id: string; version: number; root_memory_id: string | null; similarity: number }[]
     >`
@@ -104,8 +110,9 @@ export class MemoryRepository {
       { id: string; version: number; summary: string | null; similarity: number }[]
     >`
         SELECT id,
-               version, summary, (1 - (embedding <=>
-               ${`[${vec.join(',')}]`}::vector)) AS similarity
+               version,
+               summary,
+               (1 - (embedding <=> ${`[${vec.join(',')}]`}::vector)) AS similarity
         FROM memory
         WHERE user_id = ${userId}::uuid
           AND type = 'knowledge'
@@ -193,7 +200,13 @@ export class MemoryRepository {
 
     let seq = 0;
     for (const j of carried) {
-      await tx.memory__memory_content.create({data: {memory_id: newMemory.id, memory_content_id: j.memory_content_id, seq: seq++}});
+      await tx.memory__memory_content.create({
+        data: {
+          memory_id: newMemory.id,
+          memory_content_id: j.memory_content_id,
+          seq: seq++
+        }
+      });
     }
 
     const rootId = newMemory.root_memory_id ?? newMemory.id;
@@ -223,7 +236,9 @@ export class MemoryRepository {
           confirmed_score: confirmedScore, score, scored_at: now,
         },
       });
-      await tx.$executeRaw`UPDATE memory_content SET embedding = ${`[${newEmbeddings[i].join(',')}]`}::vector WHERE id = ${mc.id}::uuid`;
+      await tx.$executeRaw`UPDATE memory_content
+                           SET embedding = ${`[${newEmbeddings[i].join(',')}]`}::vector
+                           WHERE id = ${mc.id}::uuid`;
       await tx.memory__memory_content.create({data: {memory_id: newMemory.id, memory_content_id: mc.id, seq: seq++}});
       await tx.memory_content__message.createMany({
         data: evidenceIds.map(mid => ({memory_content_id: mc.id, message_id: mid})),
@@ -258,7 +273,9 @@ export class MemoryRepository {
       `;
       await tx.$executeRaw`
           INSERT INTO memory__keyword (memory_id, keyword_code, weight)
-          VALUES (${newMemory.id}::uuid, ${kw.code}, ${kw.weight ?? 1}) ON CONFLICT (memory_id, keyword_code) DO UPDATE SET weight = EXCLUDED.weight
+          VALUES (${newMemory.id}::uuid, ${kw.code}, ${kw.weight ?? 1}) ON CONFLICT (memory_id, keyword_code) DO
+          UPDATE
+          SET weight = EXCLUDED.weight
       `;
     }
 
@@ -272,7 +289,9 @@ export class MemoryRepository {
     `;
     if (allContentEmbeddings.length > 0) {
       const centroid = this.modelService.getAverageCentroid(allContentEmbeddings.map(r => r.embedding));
-      await tx.$executeRaw`UPDATE memory SET embedding = ${`[${centroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid`;
+      await tx.$executeRaw`UPDATE memory
+                           SET embedding = ${`[${centroid.join(',')}]`}::vector
+                           WHERE id = ${newMemory.id}::uuid`;
     }
 
     // 결정 B/F: 조인된 content가 0개인 새 버전은 그 버전만 비활성 처리(lineage/parent는 안 건드림)
@@ -296,7 +315,7 @@ export class MemoryRepository {
         SELECT id, embedding::float4[] AS embedding
         FROM memory_content
         WHERE id = ANY (${newContentIds}::uuid[])
-        AND embedding IS NOT NULL
+          AND embedding IS NOT NULL
     `;
 
     for (const content of newContents) {
@@ -319,7 +338,7 @@ export class MemoryRepository {
 
       await tx.$executeRaw`
           UPDATE memory_content
-          SET repetition_count   = repetition_count + 1,
+          SET repetition_count = repetition_count + 1,
               last_referenced_at = NOW()
           WHERE id = ${matches[0].id}::uuid
       `;
@@ -544,7 +563,13 @@ export class MemoryRepository {
         const c = contents[i];
         const old = c.id ? existingById.get(c.id) : undefined;
         if (old && old.content === c.text) {
-          await tx.memory__memory_content.create({data: {memory_id: newMemory.id, memory_content_id: old.id, seq: seq++}});
+          await tx.memory__memory_content.create({
+            data: {
+              memory_id: newMemory.id,
+              memory_content_id: old.id,
+              seq: seq++
+            }
+          });
           continue;
         }
         const mc = await tx.memory_content.create({
@@ -558,7 +583,9 @@ export class MemoryRepository {
           },
         });
         const emb = embeddingByIdx.get(i);
-        if (emb) await tx.$executeRaw`UPDATE memory_content SET embedding = ${`[${emb.join(',')}]`}::vector WHERE id = ${mc.id}::uuid`;
+        if (emb) await tx.$executeRaw`UPDATE memory_content
+                                      SET embedding = ${`[${emb.join(',')}]`}::vector
+                                      WHERE id = ${mc.id}::uuid`;
         await tx.memory__memory_content.create({data: {memory_id: newMemory.id, memory_content_id: mc.id, seq: seq++}});
       }
 
@@ -580,7 +607,9 @@ export class MemoryRepository {
       `;
       if (allEmb.length > 0) {
         const centroid = this.modelService.getAverageCentroid(allEmb.map(r => r.embedding));
-        await tx.$executeRaw`UPDATE memory SET embedding = ${`[${centroid.join(',')}]`}::vector WHERE id = ${newMemory.id}::uuid`;
+        await tx.$executeRaw`UPDATE memory
+                             SET embedding = ${`[${centroid.join(',')}]`}::vector
+                             WHERE id = ${newMemory.id}::uuid`;
       }
 
       return newMemory;
@@ -633,7 +662,9 @@ export class MemoryRepository {
             confirmed_score: confirmedScore, score, scored_at: now,
           },
         });
-        await tx.$executeRaw`UPDATE memory_content SET embedding = ${`[${embeddings[i].join(',')}]`}::vector WHERE id = ${mc.id}::uuid`;
+        await tx.$executeRaw`UPDATE memory_content
+                             SET embedding = ${`[${embeddings[i].join(',')}]`}::vector
+                             WHERE id = ${mc.id}::uuid`;
         await tx.memory__memory_content.create({data: {memory_id: newMemory.id, memory_content_id: mc.id, seq: seq++}});
         // 결정 C: message 근거 연결 없음
       }
@@ -714,26 +745,26 @@ export class MemoryRepository {
     await this.prisma.$transaction(async (tx) => {
       // 이 lineage 밖(versionIds 외)에는 조인이 하나도 안 남는 content만 실제 삭제
       await tx.$executeRaw`
-          DELETE FROM memory_content__message WHERE memory_content_id IN (
-              SELECT mmc.memory_content_id FROM memory__memory_content mmc
-              WHERE mmc.memory_id = ANY (${versionIds}::uuid[])
-                AND NOT EXISTS (
-                  SELECT 1 FROM memory__memory_content other
-                  WHERE other.memory_content_id = mmc.memory_content_id
-                    AND other.memory_id <> ALL (${versionIds}::uuid[])
-                )
-          )
+          DELETE
+          FROM memory_content__message
+          WHERE memory_content_id IN (SELECT mmc.memory_content_id
+                                      FROM memory__memory_content mmc
+                                      WHERE mmc.memory_id = ANY (${versionIds}::uuid[])
+                                        AND NOT EXISTS (SELECT 1
+                                                        FROM memory__memory_content other
+                                                        WHERE other.memory_content_id = mmc.memory_content_id
+                                                          AND other.memory_id <> ALL (${versionIds}::uuid[])))
       `;
       await tx.$executeRaw`
-          DELETE FROM memory_content WHERE id IN (
-              SELECT mmc.memory_content_id FROM memory__memory_content mmc
-              WHERE mmc.memory_id = ANY (${versionIds}::uuid[])
-                AND NOT EXISTS (
-                  SELECT 1 FROM memory__memory_content other
-                  WHERE other.memory_content_id = mmc.memory_content_id
-                    AND other.memory_id <> ALL (${versionIds}::uuid[])
-                )
-          )
+          DELETE
+          FROM memory_content
+          WHERE id IN (SELECT mmc.memory_content_id
+                       FROM memory__memory_content mmc
+                       WHERE mmc.memory_id = ANY (${versionIds}::uuid[])
+                         AND NOT EXISTS (SELECT 1
+                                         FROM memory__memory_content other
+                                         WHERE other.memory_content_id = mmc.memory_content_id
+                                           AND other.memory_id <> ALL (${versionIds}::uuid[])))
       `;
       await tx.memory__memory_content.deleteMany({where: {memory_id: {in: versionIds}}});
       await tx.memory__keyword.deleteMany({where: {memory_id: {in: versionIds}}});

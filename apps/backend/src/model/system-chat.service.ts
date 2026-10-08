@@ -9,6 +9,13 @@ interface WeightedLabel {
   weight: number;
 }
 
+export interface MessageContentResult {
+  contents: WeightedLabel[];
+  domain: string[];
+  entity: string[];
+  action: string[];
+}
+
 function formatMessages(msgs: MessageForBatch[]) {
   return msgs.map(m => ({
     [m.role === 'user' ? 'user' : (m.provider ?? 'assistant')]: {
@@ -24,19 +31,9 @@ function normalizeWeights(contents: WeightedLabel[]): WeightedLabel[] {
   return contents.map(c => ({...c, weight: c.weight / sum}));
 }
 
-function formatExchanges(exchanges: Exchange[][]) {
-  return exchanges.map(array => {
-    const sorted = [...array].sort((a, b) => (a.seq ?? -1) - (b.seq ?? -1));
-    const merged = new Map<string, { role: string; content: string[] }>();
-    for (const e of sorted) {
-      const entry = merged.get(e.message_id) ?? {role: e.role, content: []};
-      entry.content.push(e.content);
-      merged.set(e.message_id, entry);
-    }
-    return Array.from(merged.values()).map(({role, content}) => {
-      const title = role === 'user' ? '질문:' : '응답:';
-      return `${title}\n${content.join(' ')}`;
-    });
+function formatExchanges(exchanges: Exchange[]) {
+  return exchanges.map(exchange => {
+    return `질문:\n${exchange.parent!.content}\n응답:\n${exchange.content}`
   })
 }
 
@@ -47,108 +44,70 @@ export class SystemChatService {
 
   private messageContentRule = `
 [지침]
-- 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
-- 아래에 해당하는 나온 정보는 contents에 포함하지 않는다.
-  - (AI assistant의) 인사
-  - (AI assistant의) 자기소개, 자신의 역할·능력·기능에 대한 설명
-  - (AI assistant의) 도움을 제공하겠다는 안내·제안·포부
-  - (AI assistant의) 맞장구, 추임새
-- contents[i].text는 대화에 등장한, 장기 기억으로 남길 만한 정보를 완결된 평서문으로 표현한 한 문장이다.
-- 추출할 정보가 없으면 contents는 빈 배열을 반환한다.
-- contents 의 각 문장에는 주어를 포함하고 문맥에 독립적으로 표현한다.
-- contents, topicLabels 의 언어는 원문의 언어를 선호한다.
-- topicLabels 에는 각 주요 키워드만 추출하여 저장한다.
-1. 대화에서 장기 기억으로 남길 만한 정보를 완결된 문장으로 추출한다.
+- 추출할 내용이 없으면 contents는 빈 배열을 반환한다.
+- contents[i].text, domain, entity, action의 언어는 [대화]의 주요 언어를 선호한다.
+1. [대화]에서 정보를 추출한다.
+    . 특정 주제에 대한 설명·사실·방법 중, 이후 대화에서도 다시 활용할 가치가 있는 정보를 추출한다.
     . 대화에 실제로 등장한 정보만 사용하고 새로운 사실을 만들지 않는다.
-    . 각 문장은 구체적인 주제와 맥락이 드러나도록 서술한다.
-    . 여러 도메인에서 다른 의미로 쓰일 수 있는 단어는 현재 문맥의 의미가 드러나게 표현한다.
-    . 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
-2. 각 문장이 전체 주제를 얼마나 대표하는지 weight를 0~1로 매긴다.
+    . 각 문장은 완결된 평서문 한 문장으로 표현한다.
+    . 여러 도메인에서 다른 의미로 쓰일 수 있는 단어는 현재 문맥의 의미가 드러나도록 표현한다.
+    . 기억할 정보가 없는 인사, 자기소개, 포부, 맞장구, 추임새, 제안, 추측으로 이루어진 문장은 추출 대상이 아니다.
+2. 추출한 정보를 contents에 할당한다.
+    . contents[i].text에 각 문장을 할당한다. 한 번에 한 개의 문장만 할당한다.
+    . contents[i].weight는 각 문장이 추출한 정보에 대해 주제를 얼마나 대표하는지 0~1로 평가한다.
+    . 메타정보(domain, entity, action)는 contents 에 포함시키지 않는다.
     . 대표 주제: 0.8 이상 1.0 이하
     . 보조 주제: 0.3 이상 0.8 미만
     . 그 외 주제: 0.0 이상 0.3 미만
-3. 전체 문장에 대하여 핵심 키워드를 topicLabels로 추출한다
+3. 추출한 정보에서 주제를 식별하는 핵심 키워드를 메타정보(domain, entity, action) 에 배열로 추출한다.
+    . 키워드는 [대화]에 실제로 등장한 표현을 우선 사용한다.
+    . domain: 문장이 속한 상위 분야 1~2개
+    . entity: 문장의 핵심 대상·개념 1~5개
+    . action: entity에 대해 수행되거나 설명되는 핵심 행위 0~3개
 `
 
-  async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<{ contents: WeightedLabel[]; topicLabels: string[] }> {
-    const systemPrompt = `[질문]과 [응답]을 아래 지시사항에 따라 분석하고 결과를 JSON으로 반환하라.${this.messageContentRule}`
+  private messageContentSchema = {
+    type: 'object',
+    properties: {
+      contents: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            text: {type: 'string'},
+            weight: {type: 'number'},
+          },
+          required: ['text', 'weight'],
+        },
+      },
+      domain: {type: 'array', items: {type: 'string'}},
+      entity: {type: 'array', items: {type: 'string'}},
+      action: {type: 'array', items: {type: 'string'}},
+    },
+    required: ['contents', 'domain', 'entity', 'action'],
+  };
 
-    const dataText = `[질문]\n${questionContent}\n\n[응답]\n${answerContent}`
+  async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<MessageContentResult> {
+    const systemPrompt = `[대화]를 아래 지시사항에 따라 분석하고 결과를 JSON으로 반환하라.${this.messageContentRule}`
+
+    const dataText = `[대화]\n질문: \n${questionContent}\n응답: \n${answerContent}\n\n`
 
     const raw = await this.modelService.chat(userId, [
       {role: 'system', content: systemPrompt},
       {role: 'user', content: dataText},
-    ], undefined, {
-      type: 'object',
-      properties: {
-        contents: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              text: {type: 'string'},
-              weight: {type: 'number'},
-            },
-            required: ['text', 'weight'],
-          },
-        },
-        topicLabels: {
-          type: 'array',
-          items: {
-            type: 'string',
-          },
-        }
-      },
-      required: ['contents'],
-    });
+    ], undefined, this.messageContentSchema);
 
-    const {contents, topicLabels} = JSON.parse(raw) as { contents: WeightedLabel[]; topicLabels?: string[] };
-    return {contents, topicLabels: topicLabels ?? []};
-  }
-
-  async generateMessageContents(userId: string, exchanges: Exchange[][]): Promise<{ contents: WeightedLabel[]; topicLabels: string[] }> {
-    const inputArray = formatExchanges(exchanges);
-
-    const systemPrompt = `[대화]를 아래 지시사항에 따라 분석하고 결과를 JSON으로 반환하라.${this.messageContentRule}`
-
-    const dataText = `[대화]\n${JSON.stringify(inputArray, null, 2)}`
-
-    const raw = await this.modelService.chat(userId, [
-      {role: 'system', content: systemPrompt,},
-      {role: 'user', content: dataText},
-    ], undefined, {
-      type: 'object',
-      properties: {
-        contents: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              text: {type: 'string'},
-              weight: {type: 'number'},
-            },
-            required: ['text', 'weight'],
-          },
-        },
-        topicLabels: {
-          type: 'array',
-          items: {
-            type: 'string',
-          },
-        },
-      },
-      required: ['contents'],
-    });
-
-    const {contents, topicLabels} = JSON.parse(raw) as { contents: WeightedLabel[]; topicLabels?: string[] };
-    return {contents, topicLabels: topicLabels ?? []};
+    const {contents, domain, entity, action} = JSON.parse(raw) as MessageContentResult;
+    if (contents.length == 0) {
+      return {contents, domain: [], entity: [], action: []};
+    }
+    return {contents, domain, entity, action};
   }
 
   async analyzeConversation(
     userId: string,
-    exchanges: Exchange[][],
+    exchanges: Exchange[],
   ): Promise<LlmMemoryAnalysis> {
     const inputArray = formatExchanges(exchanges);
     const systemPrompt = [

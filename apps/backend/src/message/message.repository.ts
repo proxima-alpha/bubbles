@@ -7,7 +7,9 @@ export interface MessageForBatch {
   role: string;
   provider: string | null;
   content: string;
-  terms: string[];
+  domain: string[];
+  entity: string[];
+  action: string[];
 }
 
 export interface ExchangeRow {
@@ -17,8 +19,22 @@ export interface ExchangeRow {
   weight: number;
   message_id: string;
   parent_message_id: string | null;
-  terms: string[];
+  domain: string[];
+  entity: string[];
+  action: string[];
   seq: number | null;
+}
+
+export interface MessageExchangeRow {
+  role: string;
+  provider: string | null;
+  content: string;
+  message_id: string;
+  parent_message_id: string | null;
+  domain: string[];
+  entity: string[];
+  action: string[];
+  parent?: MessageExchangeRow;
 }
 
 // export interface Exchange {
@@ -68,10 +84,12 @@ export class MessageRepository {
     );
   }
 
-  async updateMessageTopicLabels(messageId: string, topicLabels: string[]) {
+  async updateMessageTopics(messageId: string, domain: string[], entity: string[], action: string[]) {
     await this.prisma.$executeRaw`
         UPDATE message
-        SET topic_labels = ${topicLabels}::text[]
+        SET domain = ${domain}::text[],
+            entity = ${entity}::text[],
+            action = ${action}::text[]
         WHERE id = ${messageId}::uuid
     `;
   }
@@ -123,7 +141,9 @@ export class MessageRepository {
         SELECT m.id                             AS message_id,
                m.role,
                m.provider,
-               m.terms,
+               m.domain,
+               m.entity,
+               m.action,
                m.parent_message_id,
                COALESCE(mc.content, m.content)   AS content,
                COALESCE(mc.weight, 1)            AS weight,
@@ -134,6 +154,23 @@ export class MessageRepository {
           AND m.is_proceeded = false
           AND (mc.id IS NOT NULL OR m.role = 'user')
         ORDER BY m.created_at ASC, COALESCE(mc.seq, -1) ASC
+    `;
+  }
+
+  findUnprocessedMessage(userId: string): Promise<MessageExchangeRow[]> {
+    return this.prisma.$queryRaw<MessageExchangeRow[]>`
+        SELECT m.id                             AS message_id,
+               m.role,
+               m.provider,
+               m.domain,
+               m.entity,
+               m.action,
+               m.parent_message_id,
+               m.content
+        FROM message m
+        WHERE m.user_id = ${userId}::uuid
+          AND m.is_proceeded = false
+        ORDER BY m.created_at ASC
     `;
   }
 
@@ -155,7 +192,9 @@ export class MessageRepository {
         SELECT m.id        AS message_id,
                m.role,
                m.provider,
-               m.terms,
+               m.domain,
+               m.entity,
+               m.action,
                m.parent_message_id,
                mc.content,
                mc.weight
