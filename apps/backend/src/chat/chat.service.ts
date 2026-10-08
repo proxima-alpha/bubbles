@@ -9,7 +9,7 @@ import {UserRepository} from '../user/user.repository';
 import {MessageContent} from './dto/message-content.dto';
 import {ChatMessageRequest} from "./dto/chat-message-request";
 
-function formatHistory(messages: {role: string; content: string}[]): string {
+function formatHistory(messages: { role: string; content: string }[]): string {
   return messages.map(m => {
     const title = m.role === 'user' ? '질문:' : '응답:';
     return `${title}\n${m.content}`;
@@ -112,7 +112,23 @@ export class ChatService {
   }
 
   async generateMessageContents(userId: string, question: MessageContent, answer: MessageContent) {
-    const {contents, domain, entity, action} = await this.systemChatService.generateMessageContent(userId, question.content, answer.content);
+    const {
+      contents,
+      domain,
+      entity,
+      action
+    } = await this.systemChatService.generateMessageContent(userId, question.content, answer.content);
+
+
+    const labels: string[] = []
+    const weights: number[] = []
+    labels.push(...domain, ...entity, ...action);
+    weights.push(...[
+      ...Array.from({length: domain.length}, () => 0.6),
+      ...Array.from({length: entity.length}, () => 0.3),
+      ...Array.from({length: action.length}, () => 0.1)
+    ])
+    const embeddings = await this.modelService.embedTexts(labels, 'search_document: ');
 
     const questionEmbeddings = await this.modelService.embedText(question.content, 'search_document: ');
     await this.messageRepo.updateMessageEmbedding(

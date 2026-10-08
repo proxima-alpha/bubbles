@@ -275,7 +275,7 @@ export class SchedulerService {
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`Clustering error: ${res.status} ${res.statusText} - ${body}`);
+      throw new Error(`${res.status} ${res.statusText} - ${body}`);
     }
     return res.json();
   }

@@ -3,6 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { UserRepository } from '../user/user.repository';
 import { OllamaProvider, LlmMessage } from './providers/ollama.provider';
 
+export interface ChatOptions {
+  num_predict?: number
+  think?:boolean
+}
+
 @Injectable()
 export class ModelService {
   constructor(
@@ -20,7 +25,7 @@ export class ModelService {
     return { model: user.model, baseUrl, provider: providerCode?.code ?? 'unknown', modelCode, providerCode };
   }
 
-  async chat(userId: string, messages: LlmMessage[], options?: { num_predict?: number }, format?: 'json' | Record<string, unknown>): Promise<string> {
+  async chat(userId: string, messages: LlmMessage[], options?: ChatOptions, format?: 'json' | Record<string, unknown>): Promise<string> {
     const { model, baseUrl } = await this.getModelInfo(userId);
     return this.ollamaProvider.chat(baseUrl, model, messages, options, format);
   }
@@ -28,7 +33,7 @@ export class ModelService {
   async *chatStream(
     userId: string,
     messages: LlmMessage[],
-    options?: { num_predict?: number },
+    options?: ChatOptions,
   ): AsyncGenerator<string, { inputTokens: number | null; outputTokens: number | null }, unknown> {
     const { model, baseUrl } = await this.getModelInfo(userId);
     return yield* this.ollamaProvider.chatStream(baseUrl, model, messages, options);

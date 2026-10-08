@@ -1,4 +1,5 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {Injectable, InternalServerErrorException} from '@nestjs/common';
+import {ChatOptions} from "../model.service";
 
 export interface LlmMessage {
   role: 'system' | 'user' | 'assistant';
@@ -16,8 +17,8 @@ export class OllamaProvider {
   async embed(baseUrl: string, text: string): Promise<number[]> {
     const res = await fetch(`${baseUrl}/api/embeddings`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'nomic-embed-text', prompt: text }),
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: 'nomic-embed-text', prompt: text}),
     });
     if (!res.ok) throw new Error(`Ollama embed error: ${res.status}`);
     const data = await res.json();
@@ -27,8 +28,8 @@ export class OllamaProvider {
   async embedBatch(baseUrl: string, texts: string[]): Promise<number[][]> {
     const res = await fetch(`${baseUrl}/api/embed`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'nomic-embed-text', input: texts }),
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: 'nomic-embed-text', input: texts}),
     });
     if (!res.ok) throw new Error(`Ollama embed error: ${res.status}`);
     const data = await res.json();
@@ -39,40 +40,60 @@ export class OllamaProvider {
     baseUrl: string,
     model: string,
     messages: LlmMessage[],
-    options?: { num_predict?: number },
+    options?: ChatOptions,
     format?: 'json' | Record<string, unknown>,
   ): Promise<string> {
+    const {think, ...inputOptions} = options || {};
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: false, think: false, enable_thinking: false, ...(format && { format }), ...(options && { options }) }),
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: false,
+        think: think || false,
+        enable_thinking: think || false, ...(format && {format}), ...(inputOptions && {options: inputOptions})
+      }),
     });
-    if (!res.ok) throw new InternalServerErrorException(`Ollama error: ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text()
+      throw new InternalServerErrorException(`${res.status} ${res.statusText} - ${body}`);
+    }
     const data = await res.json();
     return data.message?.content ?? '';
   }
 
-  async *chatStream(
+  async* chatStream(
     baseUrl: string,
     model: string,
     messages: LlmMessage[],
-    options?: { num_predict?: number },
+    options?: ChatOptions,
   ): AsyncGenerator<string, { inputTokens: number | null; outputTokens: number | null }, unknown> {
+    const {think, ...inputOptions} = options || {};
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: true, think: false, enable_thinking: false, ...(options && { options }) }),
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        think: think || false,
+        enable_thinking: think || false, ...(inputOptions && {options: inputOptions})
+      }),
     });
 
-    if (!res.ok || !res.body) throw new InternalServerErrorException(`Ollama error: ${res.status}`);
+    if (!res.ok || !res.body) {
+      const body = await res.text()
+      throw new InternalServerErrorException(`${res.status} ${res.statusText} - ${body}`);
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
     while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      const {done, value} = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), {stream: !done});
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
 
@@ -96,6 +117,6 @@ export class OllamaProvider {
       if (data.message?.content) yield data.message.content;
     }
 
-    return { inputTokens: null, outputTokens: null };
+    return {inputTokens: null, outputTokens: null};
   }
 }
