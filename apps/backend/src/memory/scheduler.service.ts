@@ -8,6 +8,11 @@ import {BatchMemoryResult, MemoryRepository, MemoryResult, SaveArgs} from './mem
 import {MessageExchangeRow, MessageRepository} from '../message/message.repository';
 import {UserRepository} from '../user/user.repository';
 
+export interface WeightedVector {
+  vector: number[];
+  weight: number;
+}
+
 interface ExchangeGroup {
   exchanges: Exchange[];
   existingMemory: { id: string; version: number; root_memory_id: string | null } | null;
@@ -78,20 +83,26 @@ export class SchedulerService {
 
     const embeddings = await this.modelService.embedTexts(labels, 'clustering: ');
 
-    const embeddingMap: Map<string, number[][]> = new Map();
+    const embeddingMap: Map<string, WeightedVector[]> = new Map();
     embeddings.forEach((value, index) => {
       const key = ids[index];
       if (embeddingMap.has(key)) {
-        embeddingMap.get(key)?.push(value)
+        embeddingMap.get(key)?.push({
+          vector: value,
+          weight: weights[index],
+        })
       } else {
-        embeddingMap.set(key, [value])
+        embeddingMap.set(key, [{
+          vector: value,
+          weight: weights[index],
+        }])
       }
     })
 
-    const centroidEmbeddingMap = new Map([...embeddingMap.entries()].map(([key, value]) => [key, this.modelService.getAverageCentroid(value)]));
-    const result = rows.map(row => ({...row, embedding: centroidEmbeddingMap.get(row.message_id)} as Exchange));
-
-    return result;
+    const centroidEmbeddingMap = new Map([...embeddingMap.entries()].map(([key, value]) =>
+      [key, this.modelService.getWeightedCentroid(value.map(v => v.vector), value.map(v => v.weight))]
+    ));
+    return rows.map(row => ({...row, embedding: centroidEmbeddingMap.get(row.message_id)} as Exchange));
   }
 
   async executeMemorization(userId: string): Promise<BatchMemoryResult[]> {
