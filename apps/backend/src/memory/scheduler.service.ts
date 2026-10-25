@@ -165,12 +165,12 @@ export class SchedulerService {
       const existingMessages = group.existingMemory
         ? await this.messageRepo.findMemoryMessages(group.existingMemory.root_memory_id ?? group.existingMemory.id)
         : [];
-      const analysis = await this.systemChatService.analyzeConversation(userId, group.exchanges);
-      if (analysis.contents.length > 0) {
+      const result = await this.systemChatService.generateMemoryContents(userId, group.exchanges);
+      if (result.contents.length > 0) {
         const allAssistantMessageIds = [...new Set([...existingMessages, ...group.exchanges.flat()].filter(e => e.role != 'user').map(row => row.message_id))];
         const allMessageIds = [...new Set([...existingMessages, ...group.exchanges.flat()].map(row => row.message_id))];
-        const associations = await this.findAssociations(analysis.contents.map(c => c.text), allAssistantMessageIds);
-        pendingSaves.push({...group, analysis: {...analysis, associations}, messageIds: allMessageIds});
+        const associations = await this.findAssociations(result.contents.map(c => c.text), allAssistantMessageIds);
+        pendingSaves.push({...group, memoryResult: {...result, associations}, messageIds: allMessageIds});
       } else {
         skippedMessageIds.push(...group.exchanges.flat().map(e => e.message_id));
       }

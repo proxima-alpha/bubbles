@@ -25,7 +25,7 @@ export interface LlmContentScore {
   action: string[];
 }
 
-export interface LlmMemoryAnalysis {
+export interface MemoryContentResult {
   keywords: { code: string; name: string, weight?: number }[];
   contents: LlmContentScore[];
   associations?: string[][];
@@ -34,7 +34,7 @@ export interface LlmMemoryAnalysis {
 
 export interface SaveArgs {
   messageIds: string[];
-  analysis: LlmMemoryAnalysis;
+  memoryResult: MemoryContentResult;
   existingMemory: MemoryResult | null;
 }
 
@@ -132,7 +132,7 @@ export class MemoryRepository {
   async saveMemory(
     tx: Prisma.TransactionClient,
     userId: string,
-    {messageIds, analysis, existingMemory}: SaveArgs,
+    {messageIds, memoryResult: result, existingMemory}: SaveArgs,
   ): Promise<BatchMemoryResult> {
     const maxClusterSize = Number(this.config.get('MAX_CLUSTER_SIZE', 50));
     const clusterSizeScore = Math.min(1, Math.log(1 + messageIds.length) / Math.log(1 + maxClusterSize));
@@ -161,9 +161,9 @@ export class MemoryRepository {
       return !(c.score < forgettingScoreThreshold && days > forgettingStaleDays);
     });
 
-    const validPairs = (analysis.contents ?? [])
+    const validPairs = (result.contents ?? [])
       .map((content, i) => {
-        const raw = (analysis.associations ?? [])[i];
+        const raw = (result.associations ?? [])[i];
         const evidenceIds = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [];
         return {content, evidenceIds};
       })
@@ -197,7 +197,7 @@ export class MemoryRepository {
         parent_memory_id: existingMemory?.id ?? null,
         root_memory_id: existingMemory ? (existingMemory.root_memory_id ?? existingMemory.id) : null,
         is_pinned: existingRow?.is_pinned ?? false,
-        summary: validPairs.length > 0 ? analysis.summary : (existingRow?.summary ?? analysis.summary),
+        summary: validPairs.length > 0 ? result.summary : (existingRow?.summary ?? result.summary),
       },
     });
 
@@ -266,7 +266,7 @@ export class MemoryRepository {
       `;
     }
 
-    const normalizedKeywords = (analysis.keywords ?? [])
+    const normalizedKeywords = (result.keywords ?? [])
       .map(k => ({...k, code: k.code?.toLowerCase().replace(/_/g, '-'), name: k.name?.replace(/_/g, ' ')}))
       .filter(k => k.code && /^[a-z0-9-]+$/.test(k.code));
 
@@ -621,15 +621,15 @@ export class MemoryRepository {
     });
   }
 
-  async importKnowledgeMemory(userId: string, analysis: LlmMemoryAnalysis) {
+  async importKnowledgeMemory(userId: string, result: MemoryContentResult) {
     const maxClusterSize = Number(this.config.get('MAX_CLUSTER_SIZE', 50));
     const clusterSizeScore = Math.min(1, Math.log(2) / Math.log(1 + maxClusterSize)); // cluster_size = 1 (단일 메시지 케이스와 동일 취급)
     const recencyDecayFactor = Number(this.config.get('RECENCY_DECAY_FACTOR', 30));
     const repetitionNormCap = Number(this.config.get('REPETITION_NORM_CAP', 10));
     const now = new Date();
 
-    const embeddings = analysis.contents.length > 0
-      ? await this.modelService.embedTexts(analysis.contents.map(c => c.text), 'search_document: ')
+    const embeddings = result.contents.length > 0
+      ? await this.modelService.embedTexts(result.contents.map(c => c.text), 'search_document: ')
       : [];
 
     return this.prisma.$transaction(async (tx) => {
@@ -639,13 +639,13 @@ export class MemoryRepository {
           type: 'knowledge',
           history_type: 'uploaded',
           version: 1,
-          summary: analysis.summary,
+          summary: result.summary,
         },
       });
 
       let seq = 0;
-      for (let i = 0; i < analysis.contents.length; i++) {
-        const content = analysis.contents[i];
+      for (let i = 0; i < result.contents.length; i++) {
+        const content = result.contents[i];
         const importance = clamp(clamp(content.importance) + 0.15 * clusterSizeScore);
         const {confirmedScore, score} = computeScore({
           importance,
@@ -675,7 +675,7 @@ export class MemoryRepository {
         // 결정 C: message 근거 연결 없음
       }
 
-      const normalizedKeywords = (analysis.keywords ?? [])
+      const normalizedKeywords = (result.keywords ?? [])
         .map(k => ({...k, code: k.code?.toLowerCase().replace(/_/g, '-'), name: k.name?.replace(/_/g, ' ')}))
         .filter(k => k.code && /^[a-z0-9-]+$/.test(k.code));
 
@@ -729,7 +729,7 @@ export class MemoryRepository {
     await this.prisma.$transaction(async (tx) => {
       await this.saveMemory(tx, userId, {
         messageIds: [],
-        analysis: {keywords: [], contents: [], summary: ''},
+        memoryResult: {keywords: [], contents: [], summary: ''},
         existingMemory: existing,
       });
     });

@@ -115,7 +115,7 @@ describe('MemoryRepository', () => {
 
       const result = await repo.saveMemory(tx as never, 'u1', {
         messageIds: [],
-        analysis: { keywords: [], contents: [], summary: '' },
+        memoryResult: { keywords: [], contents: [], summary: '' },
         existingMemory: { id: 'mem1', version: 1, root_memory_id: null },
       });
 
@@ -140,7 +140,7 @@ describe('MemoryRepository', () => {
 
       await repo.saveMemory(tx as never, 'u1', {
         messageIds: [],
-        analysis: { keywords: [], contents: [], summary: '' },
+        memoryResult: { keywords: [], contents: [], summary: '' },
         existingMemory: { id: 'mem1', version: 1, root_memory_id: null },
       });
 
@@ -164,7 +164,7 @@ describe('MemoryRepository', () => {
 
       await repo.saveMemory(tx as never, 'u1', {
         messageIds: [],
-        analysis: { keywords: [], contents: [], summary: '' },
+        memoryResult: { keywords: [], contents: [], summary: '' },
         existingMemory: { id: 'mem1', version: 1, root_memory_id: null },
       });
 
@@ -180,7 +180,7 @@ describe('MemoryRepository', () => {
 
       await repo.saveMemory(tx as never, 'u1', {
         messageIds: ['m1'],
-        analysis: {
+        memoryResult: {
           keywords: [],
           contents: [
             { text: '근거 없는 문장', importance: 1, durability: 1, reusefulness: 1, sensitivity: 0, explicit_signal: 1, llm_confidence_hint: 1, domain: [], entity: [], action: [] },

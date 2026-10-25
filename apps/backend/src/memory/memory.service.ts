@@ -85,8 +85,8 @@ export class MemoryService {
   }
 
   async importKnowledge(userId: string, contents: string[]) {
-    const analysis = await this.systemChatService.analyzeImportContent(userId, contents);
-    const result = await this.memoryRepo.importKnowledgeMemory(userId, analysis);
+    const memoryResult = await this.systemChatService.generateImportedMemoryContents(userId, contents);
+    const result = await this.memoryRepo.importKnowledgeMemory(userId, memoryResult);
     return this.getKnowledgeDetail(userId, result.id);
   }
 

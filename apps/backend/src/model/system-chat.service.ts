@@ -1,6 +1,6 @@
 import {Injectable} from '@nestjs/common';
 import {ModelService} from './model.service';
-import {LlmMemoryAnalysis} from '../memory/memory.repository';
+import {MemoryContentResult} from '../memory/memory.repository';
 import {MessageForBatch} from '../message/message.repository';
 import {Exchange} from "../memory/scheduler.service";
 
@@ -190,10 +190,10 @@ export class SystemChatService {
     required: ['keywords', 'contents', 'summary'],
   }
 
-  async analyzeConversation(
+  async generateMemoryContents(
     userId: string,
     exchanges: Exchange[],
-  ): Promise<LlmMemoryAnalysis> {
+  ): Promise<MemoryContentResult> {
     const inputArray = formatExchanges(exchanges);
     const systemPrompt = [
       `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.`,
@@ -209,10 +209,10 @@ export class SystemChatService {
 
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
-    return JSON.parse(jsonMatch[0]) as LlmMemoryAnalysis;
+    return JSON.parse(jsonMatch[0]) as MemoryContentResult;
   }
 
-  async analyzeImportContent(userId: string, contents: string[]): Promise<LlmMemoryAnalysis> {
+  async generateImportedMemoryContents(userId: string, contents: string[]): Promise<MemoryContentResult> {
     const systemPrompt = [
       `[정보] 목록을 [지침]에 따라 분석하여 JSON으로 응답하세요.`,
       this.memoryRule,
@@ -226,7 +226,7 @@ export class SystemChatService {
     ], undefined, this.memorySchema);
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
-    return JSON.parse(jsonMatch[0]) as LlmMemoryAnalysis;
+    return JSON.parse(jsonMatch[0]) as MemoryContentResult;
   }
 
   async synthesizeMainMemory(userId: string, existingSummary: string | null, newKnowledges: string[]): Promise<string[]> {
