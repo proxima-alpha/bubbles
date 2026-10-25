@@ -20,7 +20,7 @@
 
 ## DB 스키마
 
-- [ ] `message.embedding` 컬럼 drop — message_content.embedding centroid로 대체됨. 테스트 후 마이그레이션.
+- [ ] `message_content`(1:N)를 `message`에 통합 저장 검토 — 요약된 `message_content.content`는 벡터 비교 가치가 낮아 `message_content.embedding`의 마지막 사용처인 `MemoryRepository.findAssociations`도 label embedding(`message.embedding`, `ChatService.generateMessageContents`에서 domain/entity/action weighted centroid로 저장 중) 기반으로 바꿀 예정. 그러면 `message_content`는 텍스트 용도(`MessageRepository.findRecentMessages`의 `string_agg`)만 남아 1:N일 필요 없음. 문장별 `message_content.weight`는 현재 다운스트림 사용처 없음
 
 ## 다음 작업
 
@@ -44,3 +44,4 @@
 - [ ] Spec 3 feed-002 적용 마지막 단계: plan.md 점수 산정 기준(42행 `temporary_penalty` 항 삭제 + `durability` 0.30 반영), confirmed 공식(47행 `repetition_strength` → `repetition_count` 기반으로 변경) 동기화 — feed-002는 코드/DB만 바꾸고 plan.md 캐노니컬 공식은 그대로 둠, 용어정의(173/175행)만 먼저 갱신된 상태라 지금 plan.md 안에서도 서로 안 맞음
 - [ ] Spec 3 feed-002 결정 J: `analyzeConversation`에서 "기존 기억" 컨텍스트를 빼서 LLM이 새 메시지만 보고 분석하게 됨 — 같은 memory 그룹 안에서 이미 있는 문장을 LLM이 또 뽑아내도 막을 방법이 없어짐(재언급 감지는 다른 memory와의 교차 반복만 잡고, 같은 배치에서 막 만든/건드린 memory는 검색 대상에서 제외됨). 실제로 중복 누적이 문제되면 재검토 필요
 - [ ] Spec 3 feed-002 — `ForgettingScheduler`와 memorize 스케줄러의 실행 순서 의존 범위가 불명확: "memorize 배치가 끝난 뒤에만 forgetting 실행"이 그날 memorize가 안 돌면 forgetting도 아예 건너뛴다는 뜻인지, 겹칠 때만 순서를 보장(락 등)하고 안 겹치면 forgetting이 단독으로 돌아도 된다는 뜻인지 미정. 채팅 뜸한 유저는 memorize 트리거(`plan.md:30`, N개 또는 1일 경과)가 거의 안 돌 수 있어서, 전자로 결정하면 forgetting이 영원히 안 돌 위험 있음(F의 원래 취지와 충돌 가능) — `/apply` 전에 결정 필요
+- [ ] knowledge memory 수동 편집으로 텍스트가 바뀐 `memory_content` row의 `label_domain`/`label_entity`/`label_action`은 기존 row 값을 그대로 carry함(`memory.repository.ts` 편집 경로, score carry와 같은 방식) — 임의 선택, 근거 없음. 바뀐 텍스트 기준으로 LLM 재추출할지 검토 필요

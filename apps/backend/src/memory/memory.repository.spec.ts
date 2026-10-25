@@ -183,7 +183,7 @@ describe('MemoryRepository', () => {
         analysis: {
           keywords: [],
           contents: [
-            { text: '근거 없는 문장', importance: 1, durability: 1, reusefulness: 1, sensitivity: 0, explicit_signal: 1, llm_confidence_hint: 1 },
+            { text: '근거 없는 문장', importance: 1, durability: 1, reusefulness: 1, sensitivity: 0, explicit_signal: 1, llm_confidence_hint: 1, domain: [], entity: [], action: [] },
           ],
           associations: [[]], // evidence 없음
           summary: 's',

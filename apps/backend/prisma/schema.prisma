@@ -90,9 +90,9 @@ model message {
   model_category    String                     @default("model") @db.VarChar
   model             String?                    @db.VarChar
   content           String                     @db.Text
-  domain            String[]                   @default([])
-  entity            String[]                   @default([])
-  action            String[]                   @default([])
+  label_domain      String[]                   @default([])
+  label_entity      String[]                   @default([])
+  label_action      String[]                   @default([])
   input_tokens      Int?
   output_tokens     Int?
   parent_message_id String?                    @db.Uuid
@@ -165,6 +165,9 @@ model memory {
 model memory_content {
   id                  String    @id @default(dbgenerated("uuid_generate_v7()")) @db.Uuid
   content             String    @db.Text
+  label_domain        String[]  @default([])
+  label_entity        String[]  @default([])
+  label_action        String[]  @default([])
   importance          Float     @default(0)
   durability          Float     @default(0)
   reusefulness        Float     @default(0)

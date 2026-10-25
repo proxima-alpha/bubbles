@@ -7,9 +7,9 @@ export interface MessageForBatch {
   role: string;
   provider: string | null;
   content: string;
-  domain: string[];
-  entity: string[];
-  action: string[];
+  label_domain: string[];
+  label_entity: string[];
+  label_action: string[];
 }
 
 export interface ExchangeRow {
@@ -19,9 +19,9 @@ export interface ExchangeRow {
   weight: number;
   message_id: string;
   parent_message_id: string | null;
-  domain: string[];
-  entity: string[];
-  action: string[];
+  label_domain: string[];
+  label_entity: string[];
+  label_action: string[];
   seq: number | null;
 }
 
@@ -31,9 +31,9 @@ export interface MessageExchangeRow {
   content: string;
   message_id: string;
   parent_message_id: string | null;
-  domain: string[];
-  entity: string[];
-  action: string[];
+  label_domain: string[];
+  label_entity: string[];
+  label_action: string[];
   parent?: MessageExchangeRow;
 }
 
@@ -87,9 +87,9 @@ export class MessageRepository {
   async updateMessageTopics(messageId: string, domain: string[], entity: string[], action: string[]) {
     await this.prisma.$executeRaw`
         UPDATE message
-        SET domain = ${domain}::text[],
-            entity = ${entity}::text[],
-            action = ${action}::text[]
+        SET label_domain = ${domain}::text[],
+            label_entity = ${entity}::text[],
+            label_action = ${action}::text[]
         WHERE id = ${messageId}::uuid
     `;
   }
@@ -141,9 +141,9 @@ export class MessageRepository {
         SELECT m.id                             AS message_id,
                m.role,
                m.provider,
-               m.domain,
-               m.entity,
-               m.action,
+               m.label_domain,
+               m.label_entity,
+               m.label_action,
                m.parent_message_id,
                COALESCE(mc.content, m.content)   AS content,
                COALESCE(mc.weight, 1)            AS weight,
@@ -162,9 +162,9 @@ export class MessageRepository {
         SELECT m.id                             AS message_id,
                m.role,
                m.provider,
-               m.domain,
-               m.entity,
-               m.action,
+               m.label_domain,
+               m.label_entity,
+               m.label_action,
                m.parent_message_id,
                m.content
         FROM message m
@@ -192,9 +192,9 @@ export class MessageRepository {
         SELECT m.id        AS message_id,
                m.role,
                m.provider,
-               m.domain,
-               m.entity,
-               m.action,
+               m.label_domain,
+               m.label_entity,
+               m.label_action,
                m.parent_message_id,
                mc.content,
                mc.weight

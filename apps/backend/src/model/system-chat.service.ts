@@ -1,6 +1,6 @@
 import {Injectable} from '@nestjs/common';
 import {ModelService} from './model.service';
-import {LlmContentScore, LlmMemoryAnalysis} from '../memory/memory.repository';
+import {LlmMemoryAnalysis} from '../memory/memory.repository';
 import {MessageForBatch} from '../message/message.repository';
 import {Exchange} from "../memory/scheduler.service";
 
@@ -45,19 +45,21 @@ export class SystemChatService {
   private messageContentRule = `
 [지침]
 - 추출할 내용이 없으면 contents는 빈 배열을 반환한다.
-- 언어는 [대화]의 주요 언어를 선호한다.
+- contents[i].text, domain, entity, action 의 언어는 [대화]의 주요 언어를 선호한다.
 1. [대화]에서 정보를 추출한다.
-1-1. [대화]에서 추출 대상이 아닌 발화를 먼저 제거한다.
-  . 어시스턴트의 인사·자기소개·감사·맞장구·추임새·포부·대화 진행을 위한 안내 등 비정보성 표현
-1-2. 원문의 핵심 주제어와 핵심 관계만 남기고 간결하게 압축한다.
+1-1. [대화]에서 추출 대상이 아닌 발화를 제거한다.
+  . 어시스턴트의 인사·자기소개 등 비정보성 발화를 제거한다.
+  . 감사·맞장구·추임새·포부·대화 진행을 위한 안내 친교성 발화를 제거한다.
+1-2. 1-1의 결과에서 핵심 주제어와 핵심 관계만 남기고 간결하게 압축한다.
   . 같은 주제와 의미를 다루는 여러 문장은 핵심 내용만 남겨 하나의 정보 문장으로 통합한다.
   . 의미를 유지하는 범위에서 여러 표현을 하나의 일반화된 문장으로 정리하되, 원문에 없는 사실은 추가하지 않는다.
-  . 각 문장은 제목·번호·불릿·라벨·Markdown 스타일이 없는 완전한 평서문 한 문장으로 표현한다.
+  . 전체 문장은 평서문으로 표현하고 제목·번호·불릿·라벨·Markdown 스타일 없이 추출한다.
   . 여러 도메인에서 다른 의미로 쓰일 수 있는 단어는 현재 문맥의 의미가 드러나도록 표현한다.
   . 메타정보(domain, entity, action) 를 미리 추출하지 않는다.
-2. 추출한 정보를 contents에 할당한다.
+2. 1에서 추출한 정보를 contents에 할당한다.
 2-1. contents[i].text 에 각 문장을 할당한다.
   . 한 개의 문장만 할당한다.
+  . 여기에 메타정보(domain, entity, action) 는 할당하지 않는다.
 2-2. contents[i].weight 는 contents[i].text 의 장기 기억 가치를 0~1로 평가한다.
   . 0.2~0.4: 구체성이 낮은 일반론 또는 현재 대화에서만 의미 있는 내용
   . 0.4~0.7: 특정 주제에 관한 재사용 가능한 설명·사실·방법
@@ -108,85 +110,102 @@ export class SystemChatService {
     return {contents, domain, entity, action};
   }
 
+
+  private memoryRule = `
+[지침]
+- 추출할 내용이 없으면 contents는 빈 배열을 반환한다.
+- 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
+- contents[i].text, summary, keywords[i].name은 반드시 [대화]에서 사용된 주요 언어와 동일한 언어로 작성한다.
+- keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)
+
+1. 대화에서 장기 기억으로 남길 만한 정보를 재구성 한다.
+  . 대화에 실제로 등장한 정보만 사용하고 새로운 사실을 만들지 않는다.
+  . 여러 도메인에서 다른 의미로 쓰일 수 있는 단어는 현재 문맥의 의미가 드러나도록 표현한다.
+  . 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
+2. 추출한 정보를 contents에 할당한다.
+2-1. contents[i].text 에 각 문장을 할당한다.
+  . 한 개의 문장만 할당한다.
+2-2. contents[i].text 에서 주제를 식별하는 핵심 키워드를 메타정보(domain, entity, action) 에 배열로 추출한다.
+  . 키워드는 [대화]에 실제로 등장한 표현을 우선 사용한다.
+  . domain: 문장이 속한 상위 분야 2~3개
+  . entity: 문장의 핵심 대상·개념 1~7개
+  . action: entity에 대해 수행되거나 설명되는 핵심 행위 0~5개
+2-3. 각 contents[i].text 문장마다 아래 점수를 0~1로 매긴다.
+  . importance: 사용자 이해에 중요할수록 높음
+  . durability: 시간이 지나도 유효할수록 높음 (날씨·일시적 감정 → 낮음, 직업·가치관·반복 패턴 → 높음)
+  . reusefulness: 재활용 가능성이 높을수록 높음
+  . sensitivity: 민감 정보일수록 높음
+  . explicit_signal: 사용자가 확정적으로 말할수록 높음
+  . llm_confidence_hint: 분석 신뢰도가 높을수록 높음
+3. contents 전체에서 키워드를 추출하고, 각 keyword가 대화 전체를 얼마나 대표하는지 weight를 매긴다.
+  . 대표 주제: 0.8~1.0
+  . 보조 주제: 0.3 이상 0.8 미만
+  . 그 외 주제: 0.0 이상 0.3 미만
+4. contents 전체를 한 문장으로 요약하여 summary에 담는다.
+`
+
+  private memorySchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      keywords: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            code: {type: 'string'},
+            name: {type: 'string'},
+            weight: {type: 'number'},
+          },
+          required: ['code', 'name', 'weight'],
+        },
+      },
+      contents: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            text: {type: 'string'},
+            importance: {type: 'number'},
+            durability: {type: 'number'},
+            reusefulness: {type: 'number'},
+            sensitivity: {type: 'number'},
+            explicit_signal: {type: 'number'},
+            llm_confidence_hint: {type: 'number'},
+            domain: {type: 'array', items: {type: 'string'}},
+            entity: {type: 'array', items: {type: 'string'}},
+            action: {type: 'array', items: {type: 'string'}},
+          },
+          required: [
+            'text', 'importance', 'durability', 'reusefulness',
+            'sensitivity', 'explicit_signal', 'llm_confidence_hint',
+            'domain', 'entity', 'action'
+          ],
+        },
+      },
+      summary: {type: 'string'},
+    },
+    required: ['keywords', 'contents', 'summary'],
+  }
+
   async analyzeConversation(
     userId: string,
     exchanges: Exchange[],
   ): Promise<LlmMemoryAnalysis> {
     const inputArray = formatExchanges(exchanges);
     const systemPrompt = [
-      `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.
-[지침]
-- 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
-- 중요: contents[i].text, summary, keywords[i].name은 반드시 [대화]에서 사용된 주요 언어와 동일한 언어로 작성한다.
-- contents[i].text는 [대화]에 등장한, 장기 기억으로 남길 만한 정보를 완결된 평서문으로 표현한 한 문장이다.
-- keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)
-- 추출할 정보가 없으면 반드시 contents는 빈 배열을 반환한다.`,
-      `1. 대화에서 장기 기억으로 남길 만한 정보를 완결된 문장으로 추출하여 contents[i].text에 할당한다.
-    . 대화에 실제로 등장한 정보만 사용하고 새로운 사실을 만들지 않는다.
-    . 각 문장은 구체적인 주제와 맥락이 드러나도록 서술한다.
-    . 여러 도메인에서 다른 의미로 쓰일 수 있는 단어는 현재 문맥의 의미가 드러나게 표현한다.
-    . 서로 다른 주제가 있을 때만 여러 문장으로 나눈다.
-2. contents 전체에서 키워드를 추출하고, 각 keyword가 대화 전체를 얼마나 대표하는지 weight를 매긴다.
-    . 대표 주제: 0.8~1.0
-    . 보조 주제: 0.3 이상 0.8 미만
-    . 그 외 주제: 0.0 이상 0.3 미만
-3. 각 contents 문장마다 아래 점수를 0~1로 매긴다.
-    . importance: 사용자 이해에 중요할수록 높음
-    . durability: 시간이 지나도 유효할수록 높음 (날씨·일시적 감정 → 낮음, 직업·가치관·반복 패턴 → 높음)
-    . reusefulness: 재활용 가능성이 높을수록 높음
-    . sensitivity: 민감 정보일수록 높음
-    . explicit_signal: 사용자가 확정적으로 말할수록 높음
-    . llm_confidence_hint: 분석 신뢰도가 높을수록 높음
-4. contents 전체를 한 문장으로 요약하여 summary에 담는다.`,
-    ].join('\n\n');
+      `[대화] 내용을 [지침]에 따라 분석하여 JSON으로 응답하세요.`,
+      this.memoryRule,
+    ].join('\n');
 
     const dataText = `[대화]\n${JSON.stringify(inputArray, null, 2)}`;
 
-    const schema = {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        keywords: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              code: {type: 'string'},
-              name: {type: 'string'},
-              weight: {type: 'number'},
-            },
-            required: ['code', 'name', 'weight'],
-          },
-        },
-        contents: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              text: {type: 'string'},
-              importance: {type: 'number'},
-              durability: {type: 'number'},
-              reusefulness: {type: 'number'},
-              sensitivity: {type: 'number'},
-              explicit_signal: {type: 'number'},
-              llm_confidence_hint: {type: 'number'},
-            },
-            required: [
-              'text', 'importance', 'durability', 'reusefulness',
-              'sensitivity', 'explicit_signal', 'llm_confidence_hint',
-            ],
-          },
-        },
-        summary: {type: 'string'},
-      },
-      required: ['keywords', 'contents', 'summary'],
-    };
     const raw = await this.modelService.chat(userId, [
       {role: 'system', content: systemPrompt},
       {role: 'user', content: dataText},
-    ], undefined, schema);
+    ], undefined, this.memorySchema);
 
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
@@ -195,80 +214,19 @@ export class SystemChatService {
 
   async analyzeImportContent(userId: string, contents: string[]): Promise<LlmMemoryAnalysis> {
     const systemPrompt = [
-      `[정보] 목록을 [지침]에 따라 분석하여 JSON으로 응답하세요.
-[지침]
-- [정보]의 각 항목은 사용자가 직접 작성한 확정된 문장이다. 새로 만들거나 고쳐 쓰지 않는다.
-- scores는 [정보]와 같은 길이의 배열이며, scores[i]는 [정보][i]에 대한 점수다.
-- 중요: keywords[i].name, summary는 반드시 [정보]에서 사용된 주요 언어와 동일한 언어로 작성한다.
-- keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)`,
-      `1. [정보] 전체에서 키워드를 추출하고, 각 keyword가 [정보] 전체를 얼마나 대표하는지 weight를 매긴다.
-    . 대표 주제: 0.8~1.0
-    . 보조 주제: 0.3 이상 0.8 미만
-    . 그 외 주제: 0.0 이상 0.3 미만
-2. [정보]의 각 항목마다 scores[i]에 아래 점수를 0~1로 매긴다.
-    . importance: 사용자 이해에 중요할수록 높음
-    . durability: 시간이 지나도 유효할수록 높음 (날씨·일시적 감정 → 낮음, 직업·가치관·반복 패턴 → 높음)
-    . reusefulness: 재활용 가능성이 높을수록 높음
-    . sensitivity: 민감 정보일수록 높음
-    . explicit_signal: 사용자가 확정적으로 말할수록 높음
-    . llm_confidence_hint: 분석 신뢰도가 높을수록 높음
-3. [정보] 전체를 한 문장으로 요약하여 summary에 담는다.`,
-    ].join('\n\n');
+      `[정보] 목록을 [지침]에 따라 분석하여 JSON으로 응답하세요.`,
+      this.memoryRule,
+    ].join('\n');
 
     const dataText = `[정보]\n${JSON.stringify(contents, null, 2)}`;
-
-    const scoreSchema = {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        importance: {type: 'number'},
-        durability: {type: 'number'},
-        reusefulness: {type: 'number'},
-        sensitivity: {type: 'number'},
-        explicit_signal: {type: 'number'},
-        llm_confidence_hint: {type: 'number'},
-      },
-      required: ['importance', 'durability', 'reusefulness', 'sensitivity', 'explicit_signal', 'llm_confidence_hint'],
-    };
-    const schema = {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        keywords: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              code: {type: 'string'},
-              name: {type: 'string'},
-              weight: {type: 'number'},
-            },
-            required: ['code', 'name', 'weight'],
-          },
-        },
-        scores: {type: 'array', items: scoreSchema},
-        summary: {type: 'string'},
-      },
-      required: ['keywords', 'scores', 'summary'],
-    };
 
     const raw = await this.modelService.chat(userId, [
       {role: 'system', content: systemPrompt},
       {role: 'user', content: dataText},
-    ], undefined, schema);
+    ], undefined, this.memorySchema);
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('LLM response has no JSON');
-    const parsed = JSON.parse(jsonMatch[0]) as {
-      keywords: LlmMemoryAnalysis['keywords'];
-      scores: Omit<LlmContentScore, 'text'>[];
-      summary: string;
-    };
-    return {
-      keywords: parsed.keywords,
-      summary: parsed.summary,
-      contents: contents.map((text, i) => ({text, ...parsed.scores[i]})),
-    };
+    return JSON.parse(jsonMatch[0]) as LlmMemoryAnalysis;
   }
 
   async synthesizeMainMemory(userId: string, existingSummary: string | null, newKnowledges: string[]): Promise<string[]> {

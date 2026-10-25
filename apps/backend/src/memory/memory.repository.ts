@@ -20,6 +20,9 @@ export interface LlmContentScore {
   sensitivity: number;
   explicit_signal: number;
   llm_confidence_hint: number;
+  domain: string[];
+  entity: string[];
+  action: string[];
 }
 
 export interface LlmMemoryAnalysis {
@@ -231,6 +234,7 @@ export class MemoryRepository {
       const mc = await tx.memory_content.create({
         data: {
           content: content.text, importance, durability: clamp(content.durability),
+          label_domain: content.domain, label_entity: content.entity, label_action: content.action,
           reusefulness: clamp(content.reusefulness), sensitivity: clamp(content.sensitivity),
           explicit_signal: clamp(content.explicit_signal), llm_confidence_hint: clamp(content.llm_confidence_hint),
           confirmed_score: confirmedScore, score, scored_at: now,
@@ -575,6 +579,7 @@ export class MemoryRepository {
         const mc = await tx.memory_content.create({
           data: {
             content: c.text,
+            label_domain: old?.label_domain ?? [], label_entity: old?.label_entity ?? [], label_action: old?.label_action ?? [],
             importance: old?.importance ?? 0, durability: old?.durability ?? 0,
             reusefulness: old?.reusefulness ?? 0, sensitivity: old?.sensitivity ?? 0,
             explicit_signal: old?.explicit_signal ?? 0, llm_confidence_hint: old?.llm_confidence_hint ?? 0,
@@ -657,6 +662,7 @@ export class MemoryRepository {
         const mc = await tx.memory_content.create({
           data: {
             content: content.text, importance, durability: clamp(content.durability),
+            label_domain: content.domain, label_entity: content.entity, label_action: content.action,
             reusefulness: clamp(content.reusefulness), sensitivity: clamp(content.sensitivity),
             explicit_signal: clamp(content.explicit_signal), llm_confidence_hint: clamp(content.llm_confidence_hint),
             confirmed_score: confirmedScore, score, scored_at: now,

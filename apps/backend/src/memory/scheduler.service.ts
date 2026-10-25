@@ -73,11 +73,11 @@ export class SchedulerService {
     const weights: number[] = []
     rows.map(row => {
       ids.push(row.message_id);
-      labels.push(...row.domain, ...row.entity, ...row.action);
+      labels.push(...row.label_domain, ...row.label_entity, ...row.label_action);
       weights.push(...[
-        ...Array.from({length: row.domain.length}, () => 0.6),
-        ...Array.from({length: row.entity.length}, () => 0.3),
-        ...Array.from({length: row.action.length}, () => 0.1)
+        ...Array.from({length: row.label_domain.length}, () => 0.6),
+        ...Array.from({length: row.label_entity.length}, () => 0.3),
+        ...Array.from({length: row.label_action.length}, () => 0.1)
       ])
     })
 
@@ -222,11 +222,11 @@ export class SchedulerService {
 
     // findSimilarMemory 쿼리용 — 저장된 memory.embedding(search_document, saveMemory가 content 평균으로 재계산)에 대응하는 쿼리 벡터
     let existingMemory: MemoryResult | null = null;
-    const topicLabels = exchanges.flatMap(e => [...e.domain, ...e.entity, ...e.action]);
+    const topicLabels = exchanges.flatMap(e => [...e.label_domain, ...e.label_entity, ...e.label_action]);
     const topicWeights = exchanges.flatMap(e => [
-      ...Array.from({length: e.domain.length}, () => 0.6),
-      ...Array.from({length: e.entity.length}, () => 0.3),
-      ...Array.from({length: e.action.length}, () => 0.1)
+      ...Array.from({length: e.label_domain.length}, () => 0.6),
+      ...Array.from({length: e.label_entity.length}, () => 0.3),
+      ...Array.from({length: e.label_action.length}, () => 0.1)
     ]);
     if (topicLabels.length > 0) {
       const queryEmbeddings = await this.modelService.embedTexts(topicLabels, 'search_query: ');

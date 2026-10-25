@@ -128,15 +128,20 @@ export class ChatService {
       ...Array.from({length: entity.length}, () => 0.3),
       ...Array.from({length: action.length}, () => 0.1)
     ])
-    const embeddings = await this.modelService.embedTexts(labels, 'search_document: ');
+    const answerEmbeddings = await this.modelService.embedTexts(labels, 'search_document: ');
+    const answerEmbedding = this.modelService.getWeightedCentroid(answerEmbeddings, weights);
 
-    const questionEmbeddings = await this.modelService.embedText(question.content, 'search_document: ');
+    const questionEmbedding = await this.modelService.embedText(question.content, 'search_document: ');
     await this.messageRepo.updateMessageEmbedding(
       question.id,
-      questionEmbeddings,
+      questionEmbedding,
     );
 
-    const answerEmbeddings = await this.modelService.embedTexts(contents.map(c => c.text), 'search_document: ');
+    if(answerEmbedding.length > 0) {
+      await this.messageRepo.updateMessageEmbedding(answer.id, answerEmbedding)
+    }
+
+    const answerContentEmbeddings = await this.modelService.embedTexts(contents.map(c => c.text), 'search_document: ');
 
     await this.messageRepo.insertMessageContents(
       answer.id,
@@ -144,7 +149,7 @@ export class ChatService {
         seq,
         content: content.text,
         weight: content.weight,
-        embedding: answerEmbeddings[seq]
+        embedding: answerContentEmbeddings[seq]
       })),
     );
 
