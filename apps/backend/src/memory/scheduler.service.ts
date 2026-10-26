@@ -4,14 +4,9 @@ import {ConfigService} from '@nestjs/config';
 import {PrismaService} from '../prisma/prisma.service';
 import {ModelService} from '../model/model.service';
 import {SystemChatService} from '../model/system-chat.service';
-import {BatchMemoryResult, MemoryRepository, MemoryResult, SaveArgs} from './memory.repository';
+import {BatchMemoryResult, LlmContentScore, MemoryRepository, MemoryResult, SaveArgs} from './memory.repository';
 import {MessageExchangeRow, MessageRepository} from '../message/message.repository';
 import {UserRepository} from '../user/user.repository';
-
-export interface WeightedVector {
-  vector: number[];
-  weight: number;
-}
 
 interface ExchangeGroup {
   exchanges: Exchange[];
@@ -67,52 +62,13 @@ export class SchedulerService {
     }))
   }
 
-  async embedLabels(rows: MessageExchangeRow[]): Promise<Exchange[]> {
-    const ids: string[] = [];
-    const labels: string[] = [];
-    const weights: number[] = []
-    rows.map(row => {
-      const rowLabels = [...row.label_domain, ...row.label_entity,
-        // ...row.label_action
-      ];
-      ids.push(...rowLabels.map(() => row.message_id));
-      labels.push(...rowLabels);
-      weights.push(...[
-        ...Array.from({length: row.label_domain.length}, () => 0.7 / row.label_domain.length),
-        ...Array.from({length: row.label_entity.length}, () => 0.3 / row.label_entity.length),
-        // ...Array.from({length: row.label_action.length}, () => 0.1 / row.label_action.length)
-      ])
-    })
-
-    const embeddings = await this.modelService.embedTexts(labels);
-
-    const embeddingMap: Map<string, WeightedVector[]> = new Map();
-    embeddings.forEach((value, index) => {
-      const key = ids[index];
-      const weight = weights[index];
-      if (embeddingMap.has(key)) {
-        embeddingMap.get(key)?.push({
-          vector: value,
-          weight: weight,
-        })
-      } else {
-        embeddingMap.set(key, [{
-          vector: value,
-          weight: weight,
-        }])
-      }
-    })
-
-    const centroidEmbeddingMap = new Map([...embeddingMap.entries()].map(([key, value]) =>
-      [key, this.modelService.getWeightedCentroid(value.map(v => v.vector), value.map(v => v.weight))]
-    ));
-    return rows.map(row => ({...row, embedding: centroidEmbeddingMap.get(row.message_id)} as Exchange));
-  }
-
   async executeMemorization(userId: string): Promise<BatchMemoryResult[]> {
     const rows = await this.messageRepo.findUnprocessedMessage(userId);
 
-    const embeddedRows = await this.embedLabels(rows)
+    const centroids = await this.modelService.embedLabelCentroids(
+      rows.map(row => ({domain: row.label_domain, entity: row.label_entity, action: row.label_action})),
+    );
+    const embeddedRows = rows.map((row, i) => ({...row, embedding: centroids[i].length > 0 ? centroids[i] : undefined} as Exchange));
 
     const exchanges = await this.parseRowsToExchange(embeddedRows);
     if (exchanges.length === 0) return [];
@@ -174,7 +130,7 @@ export class SchedulerService {
       if (result.contents.length > 0) {
         const allAssistantMessageIds = [...new Set([...existingMessages, ...group.exchanges.flat()].filter(e => e.role != 'user').map(row => row.message_id))];
         const allMessageIds = [...new Set([...existingMessages, ...group.exchanges.flat()].map(row => row.message_id))];
-        const associations = await this.findAssociations(result.contents.map(c => c.text), allAssistantMessageIds);
+        const associations = await this.findAssociations(result.contents, allAssistantMessageIds);
         pendingSaves.push({...group, memoryResult: {...result, associations}, messageIds: allMessageIds});
       } else {
         skippedMessageIds.push(...group.exchanges.flat().map(e => e.message_id));
@@ -227,17 +183,14 @@ export class SchedulerService {
 
     // findSimilarMemory 쿼리용 — 저장된 memory.embedding(search_document, saveMemory가 content 평균으로 재계산)에 대응하는 쿼리 벡터
     let existingMemory: MemoryResult | null = null;
-    const topicLabels = exchanges.flatMap(e => [...e.label_domain, ...e.label_entity, ...e.label_action]);
-    const topicWeights = exchanges.flatMap(e => [
-      ...Array.from({length: e.label_domain.length}, () => 0.6 / e.label_domain.length),
-      ...Array.from({length: e.label_entity.length}, () => 0.3 / e.label_entity.length),
-      ...Array.from({length: e.label_action.length}, () => 0.1 / e.label_action.length)
-    ]);
-    if (topicLabels.length > 0) {
-      const queryEmbeddings = await this.modelService.embedTexts(topicLabels, 'search_query: ');
-      const queryCentroid = this.modelService.getWeightedCentroid(queryEmbeddings, topicWeights);
+    const exchangeCentroids = (await this.modelService.embedLabelCentroids(
+      exchanges.map(e => ({domain: e.label_domain, entity: e.label_entity, action: e.label_action})),
+      'search_query: ',
+    )).filter(c => c.length > 0);
+    if (exchangeCentroids.length > 0) {
+      const queryCentroid = this.modelService.getAverageCentroid(exchangeCentroids);
 
-      // await this.memoryRepo.logSimilarMemory(userId, clusterCentroid);
+      await this.memoryRepo.logSimilarMemory(userId, queryCentroid);
       existingMemory = await this.memoryRepo.findSimilarMemory(userId, queryCentroid, mergeMaxSimilarity);
     }
     let isMerge = existingMemory !== null;
@@ -254,15 +207,11 @@ export class SchedulerService {
     };
   }
 
-  private async findAssociations(
-    memoryContents: string[],
-    messageIds: string[],
-    prefix: string = 'search_query: ',
-  ): Promise<string[][]> {
-    if (memoryContents.length === 0) return memoryContents.map(() => []);
-    const embeddings = await this.modelService.embedTexts(memoryContents, prefix);
+  private async findAssociations(contents: LlmContentScore[], messageIds: string[]): Promise<string[][]> {
+    const embeddings = await this.modelService.embedLabelCentroids(contents, 'search_query: ');
+    await this.memoryRepo.logAssociations(embeddings, messageIds);
 
-    // message_content에 이미 저장된 embedding과 DB에서 직접 vector 비교 (로컬 재계산 없이 재사용)
+    // answer message.embedding(label centroid, search_document)과 DB에서 직접 vector 비교
     return this.memoryRepo.findAssociations(embeddings, messageIds);
   }
 

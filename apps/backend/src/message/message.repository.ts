@@ -188,15 +188,15 @@ export class MessageRepository {
         FROM message m
         WHERE m.is_proceeded = false
           AND m.role != 'user'
-        AND EXISTS (SELECT 1 FROM message_content mc WHERE mc.message_id = m.id)
+          AND m.is_labeled = true
         GROUP BY user_id
         HAVING COUNT (*) >= ${threshold}
     `;
     return rows.map(r => r.user_id);
   }
 
-  async findMemoryMessages(rootId: string): Promise<ExchangeRow[]> {
-    return this.prisma.$queryRaw<ExchangeRow[]>`
+  async findMemoryMessages(rootId: string): Promise<MessageExchangeRow[]> {
+    return this.prisma.$queryRaw<MessageExchangeRow[]>`
         SELECT m.id        AS message_id,
                m.role,
                m.provider,
@@ -204,12 +204,11 @@ export class MessageRepository {
                m.label_entity,
                m.label_action,
                m.parent_message_id,
-               mc.content,
-               mc.weight
-        FROM message_content mc
-                 JOIN message m ON m.id = mc.message_id
+               m.content,
+               m.summary
+        FROM message m
         WHERE m.root_memory_id = ${rootId}::uuid
-        ORDER BY m.created_at ASC, mc.seq ASC
+        ORDER BY m.created_at ASC
     `;
   }
 

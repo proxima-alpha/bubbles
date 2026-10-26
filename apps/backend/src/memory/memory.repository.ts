@@ -169,9 +169,7 @@ export class MemoryRepository {
       })
       .filter(p => p.evidenceIds.length > 0);
 
-    const newEmbeddings = validPairs.length > 0
-      ? await this.modelService.embedTexts(validPairs.map(p => p.content.text), 'search_document: ')
-      : [];
+    const newEmbeddings = await this.modelService.embedLabelCentroids(validPairs.map(p => p.content), 'search_document: ');
 
     // 결정 B: carry + 신규 결과가 이전 버전과 완전히 동일(content id 집합 기준, 순서 무관)하면 새 버전 생성 스킵
     if (existingMemory && validPairs.length === 0) {
@@ -240,7 +238,7 @@ export class MemoryRepository {
           confirmed_score: confirmedScore, score, scored_at: now,
         },
       });
-      await tx.$executeRaw`UPDATE memory_content
+      if (newEmbeddings[i].length > 0) await tx.$executeRaw`UPDATE memory_content
                            SET embedding = ${`[${newEmbeddings[i].join(',')}]`}::vector
                            WHERE id = ${mc.id}::uuid`;
       await tx.memory__memory_content.create({data: {memory_id: newMemory.id, memory_content_id: mc.id, seq: seq++}});
@@ -557,9 +555,10 @@ export class MemoryRepository {
       const toEmbed = contents
         .map((c, idx) => ({idx, text: c.text, old: c.id ? existingById.get(c.id) : undefined}))
         .filter(c => !c.old || c.old.content !== c.text);
-      const embeddings = toEmbed.length > 0
-        ? await this.modelService.embedTexts(toEmbed.map(t => t.text), 'search_document: ')
-        : [];
+      const embeddings = await this.modelService.embedLabelCentroids(
+        toEmbed.map(t => ({domain: t.old?.label_domain ?? [], entity: t.old?.label_entity ?? [], action: t.old?.label_action ?? []})),
+        'search_document: ',
+      );
       const embeddingByIdx = new Map(toEmbed.map((t, k) => [t.idx, embeddings[k]]));
 
       let seq = 0;
@@ -588,7 +587,7 @@ export class MemoryRepository {
           },
         });
         const emb = embeddingByIdx.get(i);
-        if (emb) await tx.$executeRaw`UPDATE memory_content
+        if (emb && emb.length > 0) await tx.$executeRaw`UPDATE memory_content
                                       SET embedding = ${`[${emb.join(',')}]`}::vector
                                       WHERE id = ${mc.id}::uuid`;
         await tx.memory__memory_content.create({data: {memory_id: newMemory.id, memory_content_id: mc.id, seq: seq++}});
@@ -628,9 +627,7 @@ export class MemoryRepository {
     const repetitionNormCap = Number(this.config.get('REPETITION_NORM_CAP', 10));
     const now = new Date();
 
-    const embeddings = result.contents.length > 0
-      ? await this.modelService.embedTexts(result.contents.map(c => c.text), 'search_document: ')
-      : [];
+    const embeddings = await this.modelService.embedLabelCentroids(result.contents, 'search_document: ');
 
     return this.prisma.$transaction(async (tx) => {
       const newMemory = await tx.memory.create({
@@ -668,7 +665,7 @@ export class MemoryRepository {
             confirmed_score: confirmedScore, score, scored_at: now,
           },
         });
-        await tx.$executeRaw`UPDATE memory_content
+        if (embeddings[i].length > 0) await tx.$executeRaw`UPDATE memory_content
                              SET embedding = ${`[${embeddings[i].join(',')}]`}::vector
                              WHERE id = ${mc.id}::uuid`;
         await tx.memory__memory_content.create({data: {memory_id: newMemory.id, memory_content_id: mc.id, seq: seq++}});
@@ -864,101 +861,72 @@ export class MemoryRepository {
   }
 
   async logAssociations(
-    contentEmbeddings: number[][],
+    labelEmbeddings: number[][],
     messageIds: string[],
   ): Promise<void> {
-    if (contentEmbeddings.length === 0 || messageIds.length === 0) {
+    const queries = labelEmbeddings
+      .map((embedding, idx) => ({idx, embedding}))
+      .filter(q => q.embedding.length > 0);
+    if (queries.length === 0 || messageIds.length === 0) {
       console.log('[logAssociations] empty input');
       return;
     }
 
-    const embArrayLiteral = contentEmbeddings
-      .map(e => `'[${e.join(',')}]'::vector(768)`)
+    const idxArrayLiteral = queries.map(q => q.idx).join(',');
+    const embArrayLiteral = queries
+      .map(q => `'[${q.embedding.join(',')}]'::vector(768)`)
       .join(',');
     const messageIdList = messageIds.map(id => `'${id}'::uuid`).join(',');
 
-    const rows = await this.prisma.$queryRawUnsafe<{
-      content_idx: number;
-      message_id: string;
-      top1: number;
-      top2: number | null;
-      final_score: number;
-    }[]>(`
-        WITH query_embeddings AS (SELECT ordinality - 1 AS content_idx,
-                                         embedding      AS query_embedding
-                                  FROM unnest(ARRAY[${embArrayLiteral}]) WITH ORDINALITY AS t(embedding, ordinality)),
-             scored AS (SELECT qe.content_idx,
-                               mc.message_id,
-                               1 - (mc.embedding <=> qe.query_embedding) AS similarity,
-                               ROW_NUMBER()                                 OVER (
-            PARTITION BY qe.content_idx, mc.message_id
-            ORDER BY mc.embedding <=> qe.query_embedding
-          ) AS rn
-                        FROM query_embeddings qe
-                                 CROSS JOIN message_content mc
-                        WHERE mc.message_id = ANY (ARRAY[${messageIdList}])),
-             top2 AS (SELECT content_idx,
-                             message_id,
-                             MAX(CASE WHEN rn = 1 THEN similarity END) AS top1,
-                             MAX(CASE WHEN rn = 2 THEN similarity END) AS top2
-                      FROM scored
-                      WHERE rn <= 2
-                      GROUP BY content_idx, message_id)
-        SELECT content_idx,
-               message_id,
-               top1,
-               top2,
-               CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END AS final_score
-        FROM top2
-        ORDER BY content_idx, final_score DESC
+    const rows = await this.prisma.$queryRawUnsafe<{ content_idx: number; message_id: string; similarity: number }[]>(`
+        WITH query_embeddings AS (SELECT content_idx, query_embedding
+                                  FROM unnest(ARRAY[${idxArrayLiteral}]::int[], ARRAY[${embArrayLiteral}]) AS t(content_idx, query_embedding))
+        SELECT qe.content_idx,
+               m.id                                       AS message_id,
+               1 - (m.embedding <=> qe.query_embedding)   AS similarity
+        FROM query_embeddings qe
+                 CROSS JOIN message m
+        WHERE m.id = ANY (ARRAY[${messageIdList}])
+          AND m.embedding IS NOT NULL
+        ORDER BY qe.content_idx, similarity DESC
     `);
 
-    console.log('[logAssociations]', JSON.stringify(rows, (_, v) => typeof v === 'bigint' ? Number(v) : v, 2));
+    console.log('[logAssociations]', JSON.stringify(rows, null, 2));
   }
 
   async findAssociations(
-    contentEmbeddings: number[][],
+    labelEmbeddings: number[][],
     messageIds: string[],
   ): Promise<string[][]> {
-    if (contentEmbeddings.length === 0 || messageIds.length === 0) {
-      return contentEmbeddings.map(() => []);
+    const minSimilarity = Number(this.config.get('ASSOCIATION_MIN_SIMILARITY', 0.75));
+    const queries = labelEmbeddings
+      .map((embedding, idx) => ({idx, embedding}))
+      .filter(q => q.embedding.length > 0);
+    if (queries.length === 0 || messageIds.length === 0) {
+      return labelEmbeddings.map(() => []);
     }
 
-    const embArrayLiteral = contentEmbeddings
-      .map(e => `'[${e.join(',')}]'::vector(768)`)
+    const idxArrayLiteral = queries.map(q => q.idx).join(',');
+    const embArrayLiteral = queries
+      .map(q => `'[${q.embedding.join(',')}]'::vector(768)`)
       .join(',');
     const messageIdList = messageIds.map(id => `'${id}'::uuid`).join(',');
 
-    const rows = await this.prisma.$queryRawUnsafe<{ content_idx: number; message_id: string; final_score: number }[]>(`
-        WITH query_embeddings AS (SELECT ordinality - 1 AS content_idx,
-                                         embedding      AS query_embedding
-                                  FROM unnest(ARRAY[${embArrayLiteral}]) WITH ORDINALITY AS t(embedding, ordinality)),
-             scored AS (SELECT qe.content_idx,
-                               mc.message_id,
-                               1 - (mc.embedding <=> qe.query_embedding) AS similarity,
-                               ROW_NUMBER()                                 OVER (
-            PARTITION BY qe.content_idx, mc.message_id
-            ORDER BY mc.embedding <=> qe.query_embedding
-          ) AS rn
-                        FROM query_embeddings qe
-                                 CROSS JOIN message_content mc
-                        WHERE mc.message_id = ANY (ARRAY[${messageIdList}])),
-             top2 AS (SELECT content_idx,
-                             message_id,
-                             MAX(CASE WHEN rn = 1 THEN similarity END) AS top1,
-                             MAX(CASE WHEN rn = 2 THEN similarity END) AS top2
-                      FROM scored
-                      WHERE rn <= 2
-                      GROUP BY content_idx, message_id)
-        SELECT content_idx,
-               message_id,
-               CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END AS final_score
-        FROM top2
-        WHERE CASE WHEN top2 IS NULL THEN top1 ELSE top1 * 0.7 + top2 * 0.3 END >= 0.75
-        ORDER BY content_idx, final_score DESC
+    const rows = await this.prisma.$queryRawUnsafe<{ content_idx: number; message_id: string; similarity: number }[]>(`
+        WITH query_embeddings AS (SELECT content_idx, query_embedding
+                                  FROM unnest(ARRAY[${idxArrayLiteral}]::int[], ARRAY[${embArrayLiteral}]) AS t(content_idx, query_embedding))
+        SELECT qe.content_idx,
+               m.id                                       AS message_id,
+               1 - (m.embedding <=> qe.query_embedding)   AS similarity
+        FROM query_embeddings qe
+                 CROSS JOIN message m
+        WHERE m.id = ANY (ARRAY[${messageIdList}])
+          AND m.embedding IS NOT NULL
+          AND 1 - (m.embedding <=> qe.query_embedding) >= ${minSimilarity}
+        ORDER BY qe.content_idx, similarity DESC
     `);
 
-    const associations: string[][] = contentEmbeddings.map(() => []);
+    const associations: string[][] = labelEmbeddings.map(() => []);
     for (const row of rows) {
       associations[row.content_idx].push(row.message_id);
     }

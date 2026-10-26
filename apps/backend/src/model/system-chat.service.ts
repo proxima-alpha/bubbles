@@ -116,8 +116,7 @@ export class SystemChatService {
 [지침]
 - 추출할 내용이 없으면 contents는 빈 배열을 반환한다.
 - 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
-- contents[i].text, contents[i].domain, contents[i].entity, contents[i].action, summary, keywords[i].name은 반드시 [대화]에서 사용된 주요 언어와 동일한 언어로 작성한다.
-- keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)
+- contents[i].text, contents[i].domain, contents[i].entity, contents[i].action, summary 는 반드시 [대화]에서 사용된 주요 언어와 동일한 언어로 작성한다.
 
 1. 대화에서 장기 기억으로 남길 만한 정보를 재구성 한다.
   . 대화에 실제로 등장한 정보만 사용하고 새로운 사실을 만들지 않는다.
@@ -138,30 +137,13 @@ export class SystemChatService {
   . sensitivity: 민감 정보일수록 높음
   . explicit_signal: 사용자가 확정적으로 말할수록 높음
   . llm_confidence_hint: 분석 신뢰도가 높을수록 높음
-3. contents 전체에서 키워드를 추출하고, 각 keyword가 대화 전체를 얼마나 대표하는지 weight를 매긴다.
-  . 대표 주제: 0.8~1.0
-  . 보조 주제: 0.3 이상 0.8 미만
-  . 그 외 주제: 0.0 이상 0.3 미만
-4. contents 전체를 한 문장으로 요약하여 summary에 담는다.
+3. contents 전체를 한 문장으로 요약하여 summary에 담는다.
 `
 
   private memorySchema = {
     type: 'object',
     additionalProperties: false,
     properties: {
-      keywords: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            code: {type: 'string'},
-            name: {type: 'string'},
-            weight: {type: 'number'},
-          },
-          required: ['code', 'name', 'weight'],
-        },
-      },
       contents: {
         type: 'array',
         items: {
@@ -188,7 +170,7 @@ export class SystemChatService {
       },
       summary: {type: 'string'},
     },
-    required: ['keywords', 'contents', 'summary'],
+    required: ['contents', 'summary'],
   }
 
   async generateMemoryContents(

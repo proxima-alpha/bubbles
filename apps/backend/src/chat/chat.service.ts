@@ -121,16 +121,7 @@ export class ChatService {
     } = await this.systemChatService.generateMessageContent(userId, question.content, answer.content);
 
 
-    const labels: string[] = []
-    const weights: number[] = []
-    labels.push(...domain, ...entity, ...action);
-    weights.push(...[
-      ...Array.from({length: domain.length}, () => 0.6 / domain.length),
-      ...Array.from({length: entity.length}, () => 0.3 / entity.length),
-      ...Array.from({length: action.length}, () => 0.1 / action.length),
-    ])
-    const answerEmbeddings = await this.modelService.embedTexts(labels, 'search_document: ');
-    const answerEmbedding = this.modelService.getWeightedCentroid(answerEmbeddings, weights);
+    const answerEmbedding = await this.modelService.embedLabelCentroid(domain, entity, action, 'search_document: ');
 
     const questionEmbedding = await this.modelService.embedText(question.content, 'search_document: ');
     await this.messageRepo.updateMessageEmbedding(

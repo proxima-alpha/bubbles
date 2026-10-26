@@ -84,6 +84,28 @@ export class ModelService {
     });
   }
 
+  public async embedLabelCentroid(domain: string[], entity: string[], action: string[], prefix?: string): Promise<number[]> {
+    const [centroid] = await this.embedLabelCentroids([{domain, entity, action}], prefix);
+    return centroid;
+  }
+
+  async embedLabelCentroids(labelSets: { domain: string[]; entity: string[]; action: string[] }[], prefix?: string): Promise<number[][]> {
+    const labels = labelSets.flatMap(s => [...s.domain, ...s.entity]);
+    if (labels.length === 0) return labelSets.map(() => []);
+    const vectors = await this.embedTexts(labels, prefix);
+    let offset = 0;
+    return labelSets.map(s => {
+      const count = s.domain.length + s.entity.length;
+      const weights = [
+        ...s.domain.map(() => 0.7 / s.domain.length),
+        ...s.entity.map(() => 0.3 / s.entity.length),
+      ];
+      const centroid = this.getWeightedCentroid(vectors.slice(offset, offset + count), weights);
+      offset += count;
+      return centroid;
+    });
+  }
+
   getAverageCentroid(vectors: number[][]): number[] {
     if (vectors.length === 0) return [];
     if (vectors.length === 1) return vectors[0];

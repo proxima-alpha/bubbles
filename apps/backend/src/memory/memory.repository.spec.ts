@@ -18,6 +18,7 @@ const mockMessageRepo = {
 
 const mockModelService = {
   embedTexts: jest.fn(),
+  embedLabelCentroids: jest.fn(),
   getAverageCentroid: jest.fn(),
 };
 
@@ -219,7 +220,7 @@ describe('MemoryRepository', () => {
         { memory_content_id: 'c1', memory_content: { id: 'c1', content: '원래 문장' } },
       ]);
       mockPrisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(tx));
-      mockModelService.embedTexts.mockResolvedValue([[0.1, 0.2]]);
+      mockModelService.embedLabelCentroids.mockResolvedValue([[0.1, 0.2]]);
 
       await repo.updateKnowledgeMemory('u1', 'mem1', [{ id: 'c1', text: '수정된 문장' }], 'summary');
 

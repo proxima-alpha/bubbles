@@ -45,7 +45,7 @@ export class UserRepository {
         AND EXISTS (
           SELECT 1 FROM message m
           WHERE m.user_id = u.id AND m.is_proceeded = false AND m.role != 'user'
-            AND EXISTS (SELECT 1 FROM message_content mc WHERE mc.message_id = m.id)
+            AND m.is_labeled = true
         )
     `;
     return rows.map(r => r.user_id);
