@@ -5,7 +5,7 @@ Bubbles is a personal AI chat web app with RAG-based memory.
 - Frontend: Next.js 14, TypeScript, Tailwind, shadcn/ui, React Query, Axios
 - Backend: NestJS, TypeScript, Prisma
 - DB: PostgreSQL + pgvector
-- Embedding: Ollama nomic-embed-text
+- Embedding: Ollama nomic-embed-text-v2-moe
 - Infra: Docker Compose
 
 ## Rules

@@ -75,7 +75,7 @@ RAG 시스템으로 과거 기억을 유지하며, 사용자별로 메모리가 
 - **NestJS** (TypeScript, DI 구조)
 - **Prisma** (ORM, 마이그레이션)
 - **PostgreSQL** + **pgvector** 확장 (대화 기록 + 벡터 저장 통합)
-- **Ollama** (로컬 임베딩 모델 서빙 — `nomic-embed-text`)
+- **Ollama** (로컬 임베딩 모델 서빙 — `nomic-embed-text-v2-moe`)
 - **Python FastAPI 서버** (AgglomerativeClustering 전용, NestJS에서 HTTP 호출)
 - **LLM**: general LLM 연동 (Claude, GPT 등 스위칭 가능, 특정 제공사 종속 없음)
 

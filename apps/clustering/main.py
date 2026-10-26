@@ -49,6 +49,7 @@ def cluster(req: ClusterRequest):
     clusters: dict[int, list[str]] = {}
     noise: list[str] = []
     for idx, label in enumerate(labels):
+        logger.info("embedding[%d]: %r", idx, label)
         if label_counts[label] < req.min_cluster_size:
             noise.append(ids[idx])
         else:

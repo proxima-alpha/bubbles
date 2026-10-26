@@ -90,6 +90,7 @@ model message {
   model_category    String                     @default("model") @db.VarChar
   model             String?                    @db.VarChar
   content           String                     @db.Text
+  summary           String?                    @db.Text
   label_domain      String[]                   @default([])
   label_entity      String[]                   @default([])
   label_action      String[]                   @default([])
@@ -99,6 +100,7 @@ model message {
   root_memory_id    String?                    @db.Uuid
   embedding         Unsupported("vector(768)")?
   is_proceeded      Boolean                    @default(false)
+  is_labeled        Boolean                    @default(false)
   created_at        DateTime                   @default(now()) @db.Timestamptz
 
   user           user        @relation(fields: [user_id], references: [id])

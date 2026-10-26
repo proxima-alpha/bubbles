@@ -31,7 +31,7 @@ services:
     command:
       - |
         until ollama list > /dev/null 2>&1; do sleep 1; done
-        ollama pull nomic-embed-text
+        ollama pull nomic-embed-text-v2-moe
         ollama pull exaone3.5:2.4b
 
   clustering:

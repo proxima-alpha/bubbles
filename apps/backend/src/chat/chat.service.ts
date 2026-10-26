@@ -113,6 +113,7 @@ export class ChatService {
 
   async generateMessageContents(userId: string, question: MessageContent, answer: MessageContent) {
     const {
+      summary,
       contents,
       domain,
       entity,
@@ -124,9 +125,9 @@ export class ChatService {
     const weights: number[] = []
     labels.push(...domain, ...entity, ...action);
     weights.push(...[
-      ...Array.from({length: domain.length}, () => 0.6),
-      ...Array.from({length: entity.length}, () => 0.3),
-      ...Array.from({length: action.length}, () => 0.1)
+      ...Array.from({length: domain.length}, () => 0.6 / domain.length),
+      ...Array.from({length: entity.length}, () => 0.3 / entity.length),
+      ...Array.from({length: action.length}, () => 0.1 / action.length),
     ])
     const answerEmbeddings = await this.modelService.embedTexts(labels, 'search_document: ');
     const answerEmbedding = this.modelService.getWeightedCentroid(answerEmbeddings, weights);
@@ -137,22 +138,20 @@ export class ChatService {
       questionEmbedding,
     );
 
-    if(answerEmbedding.length > 0) {
-      await this.messageRepo.updateMessageEmbedding(answer.id, answerEmbedding)
-    }
+    // if(!!contents && contents.length > 0) {
+    //   const answerContentEmbeddings = await this.modelService.embedTexts(contents.map(c => c.text), 'search_document: ');
+    //
+    //   await this.messageRepo.insertMessageContents(
+    //     answer.id,
+    //     contents.map((content, seq) => ({
+    //       seq,
+    //       content: content.text,
+    //       weight: content.weight,
+    //       embedding: answerContentEmbeddings[seq]
+    //     })),
+    //   );
+    // }
 
-    const answerContentEmbeddings = await this.modelService.embedTexts(contents.map(c => c.text), 'search_document: ');
-
-    await this.messageRepo.insertMessageContents(
-      answer.id,
-      contents.map((content, seq) => ({
-        seq,
-        content: content.text,
-        weight: content.weight,
-        embedding: answerContentEmbeddings[seq]
-      })),
-    );
-
-    await this.messageRepo.updateMessageTopics(answer.id, domain, entity, action);
+    await this.messageRepo.updateLabeledMessage(answer.id, summary, answerEmbedding, domain, entity, action);
   }
 }

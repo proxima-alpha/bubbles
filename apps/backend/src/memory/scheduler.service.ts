@@ -61,40 +61,44 @@ export class SchedulerService {
   }
 
   async parseRowsToExchange(rows: Exchange[]): Promise<Exchange[]> {
-    return rows.filter(row => !!row.parent_message_id).map(row => ({
+    return rows.filter(row => !!row.parent_message_id && row.summary !== null).map(row => ({
       ...row,
       parent: rows.find(r => r.message_id === row.parent_message_id),
     }))
   }
 
-  async embedTopicLabels(rows: MessageExchangeRow[]): Promise<Exchange[]> {
+  async embedLabels(rows: MessageExchangeRow[]): Promise<Exchange[]> {
     const ids: string[] = [];
     const labels: string[] = [];
     const weights: number[] = []
     rows.map(row => {
-      ids.push(row.message_id);
-      labels.push(...row.label_domain, ...row.label_entity, ...row.label_action);
+      const rowLabels = [...row.label_domain, ...row.label_entity,
+        // ...row.label_action
+      ];
+      ids.push(...rowLabels.map(() => row.message_id));
+      labels.push(...rowLabels);
       weights.push(...[
-        ...Array.from({length: row.label_domain.length}, () => 0.6),
-        ...Array.from({length: row.label_entity.length}, () => 0.3),
-        ...Array.from({length: row.label_action.length}, () => 0.1)
+        ...Array.from({length: row.label_domain.length}, () => 0.7 / row.label_domain.length),
+        ...Array.from({length: row.label_entity.length}, () => 0.3 / row.label_entity.length),
+        // ...Array.from({length: row.label_action.length}, () => 0.1 / row.label_action.length)
       ])
     })
 
-    const embeddings = await this.modelService.embedTexts(labels, 'clustering: ');
+    const embeddings = await this.modelService.embedTexts(labels);
 
     const embeddingMap: Map<string, WeightedVector[]> = new Map();
     embeddings.forEach((value, index) => {
       const key = ids[index];
+      const weight = weights[index];
       if (embeddingMap.has(key)) {
         embeddingMap.get(key)?.push({
           vector: value,
-          weight: weights[index],
+          weight: weight,
         })
       } else {
         embeddingMap.set(key, [{
           vector: value,
-          weight: weights[index],
+          weight: weight,
         }])
       }
     })
@@ -108,7 +112,7 @@ export class SchedulerService {
   async executeMemorization(userId: string): Promise<BatchMemoryResult[]> {
     const rows = await this.messageRepo.findUnprocessedMessage(userId);
 
-    const embeddedRows = await this.embedTopicLabels(rows)
+    const embeddedRows = await this.embedLabels(rows)
 
     const exchanges = await this.parseRowsToExchange(embeddedRows);
     if (exchanges.length === 0) return [];
@@ -145,15 +149,16 @@ export class SchedulerService {
 
       if (vectors.length > 0) {
         const clusterResult = await this.runClustering(vectors, ids);
+        const exchangeById = new Map(exchanges.map(e => [e.message_id, e]));
 
         groups.push(...await Promise.all(
           clusterResult.clusters.map((cluster: { label: number; ids: string[] }) =>
-            this.checkMessageFromMemory(userId, cluster.ids.map((id: string) => exchanges[ids.indexOf(id)])),
+            this.checkMessageFromMemory(userId, cluster.ids.map((id: string) => exchangeById.get(id)!)),
           ),
         ));
 
         for (const noiseId of clusterResult.noise) {
-          groups.push(await this.checkMessageFromMemory(userId, [exchanges[ids.indexOf(noiseId)]]));
+          groups.push(await this.checkMessageFromMemory(userId, [exchangeById.get(noiseId)!]));
         }
       }
     }
@@ -224,9 +229,9 @@ export class SchedulerService {
     let existingMemory: MemoryResult | null = null;
     const topicLabels = exchanges.flatMap(e => [...e.label_domain, ...e.label_entity, ...e.label_action]);
     const topicWeights = exchanges.flatMap(e => [
-      ...Array.from({length: e.label_domain.length}, () => 0.6),
-      ...Array.from({length: e.label_entity.length}, () => 0.3),
-      ...Array.from({length: e.label_action.length}, () => 0.1)
+      ...Array.from({length: e.label_domain.length}, () => 0.6 / e.label_domain.length),
+      ...Array.from({length: e.label_entity.length}, () => 0.3 / e.label_entity.length),
+      ...Array.from({length: e.label_action.length}, () => 0.1 / e.label_action.length)
     ]);
     if (topicLabels.length > 0) {
       const queryEmbeddings = await this.modelService.embedTexts(topicLabels, 'search_query: ');

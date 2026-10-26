@@ -1,0 +1,1 @@
+ALTER TABLE "message" ADD COLUMN "is_labeled" BOOLEAN NOT NULL DEFAULT false;

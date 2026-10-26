@@ -10,6 +10,7 @@ interface WeightedLabel {
 }
 
 export interface MessageContentResult {
+  summary: string;
   contents: WeightedLabel[];
   domain: string[];
   entity: string[];
@@ -33,7 +34,7 @@ function normalizeWeights(contents: WeightedLabel[]): WeightedLabel[] {
 
 function formatExchanges(exchanges: Exchange[]) {
   return exchanges.map(exchange => {
-    return `질문:\n${exchange.parent!.content}\n응답:\n${exchange.content}`
+    return `질문:\n${exchange.parent!.content}\n응답:\n${exchange.summary}`
   })
 }
 
@@ -42,55 +43,55 @@ export class SystemChatService {
   constructor(private modelService: ModelService) {
   }
 
+  /**
+   *   . 어시스턴트의 인사·자기소개·감사·맞장구·추임새 등 친교성 발화 전체를 제거한다.
+   *   . 어시스턴트의 포부·의지 표현·대화 유도 등 의사 표명 발화를 제거한다.
+   */
+
   private messageContentRule = `
 [지침]
-- 추출할 내용이 없으면 contents는 빈 배열을 반환한다.
-- contents[i].text, domain, entity, action 의 언어는 [대화]의 주요 언어를 선호한다.
+- 1-1 결과에 남은 발화가 없으면 summary 를 빈 값으로 출력하고 1-2와 2, 3은 수행하지 않는다.
+- summary, domain, entity, action 의 언어는 [대화]의 주요 언어를 선호한다.
 1. [대화]에서 정보를 추출한다.
 1-1. [대화]에서 추출 대상이 아닌 발화를 제거한다.
-  . 어시스턴트의 인사·자기소개 등 비정보성 발화를 제거한다.
-  . 감사·맞장구·추임새·포부·대화 진행을 위한 안내 친교성 발화를 제거한다.
+  . 사실·설명·조언·방법·계획 등 내용이 담긴 발화만 남긴다.
 1-2. 1-1의 결과에서 핵심 주제어와 핵심 관계만 남기고 간결하게 압축한다.
   . 같은 주제와 의미를 다루는 여러 문장은 핵심 내용만 남겨 하나의 정보 문장으로 통합한다.
   . 의미를 유지하는 범위에서 여러 표현을 하나의 일반화된 문장으로 정리하되, 원문에 없는 사실은 추가하지 않는다.
   . 전체 문장은 평서문으로 표현하고 제목·번호·불릿·라벨·Markdown 스타일 없이 추출한다.
   . 여러 도메인에서 다른 의미로 쓰일 수 있는 단어는 현재 문맥의 의미가 드러나도록 표현한다.
   . 메타정보(domain, entity, action) 를 미리 추출하지 않는다.
-2. 1에서 추출한 정보를 contents에 할당한다.
-2-1. contents[i].text 에 각 문장을 할당한다.
-  . 한 개의 문장만 할당한다.
-  . 여기에 메타정보(domain, entity, action) 는 할당하지 않는다.
-2-2. contents[i].weight 는 contents[i].text 의 장기 기억 가치를 0~1로 평가한다.
-  . 0.2~0.4: 구체성이 낮은 일반론 또는 현재 대화에서만 의미 있는 내용
-  . 0.4~0.7: 특정 주제에 관한 재사용 가능한 설명·사실·방법
-  . 0.7~1.0: 이후 대화에서 직접 활용할 가능성이 높은 구체적이고 핵심적인 정보
-3. 추출한 정보에서 주제를 식별하는 핵심 키워드를 메타정보(domain, entity, action) 에 배열로 추출한다.
-  . 키워드는 [대화]에 실제로 등장한 표현을 우선 사용한다.
-  . domain: 문장이 속한 상위 분야 1~2개
-  . entity: 문장의 핵심 대상·개념 1~5개
-  . action: entity에 대해 수행되거나 설명되는 핵심 행위 0~3개
+2. 1-2에서 정리한 정보 문장을 summary 에 그대로 작성한다.
+3. summary 에서 주제를 식별하는 핵심 키워드를 메타정보(domain, entity, action) 에 배열로 추출한다.
+  . summary 의 내용이 없으면 수행하지 않는다.
+  . 추출할 정보가 없으면 각각 빈 배열을 반환한다.
+  . 범용적인 단어로 표현하지 않는다.
+  . domain: 문장이 속한 상위 분야 최대 1개
+  . entity: 문장의 핵심 대상·개념 최대 3개
+  . action: entity에 대해 수행되거나 설명되는 핵심 행위 최대 2개
 `
 
   private messageContentSchema = {
     type: 'object',
     properties: {
-      contents: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            text: {type: 'string'},
-            weight: {type: 'number'},
-          },
-          required: ['text', 'weight'],
-        },
-      },
+      summary: {type: 'string'},
+      // contents: {
+      //   type: 'array',
+      //   items: {
+      //     type: 'object',
+      //     additionalProperties: false,
+      //     properties: {
+      //       text: {type: 'string'},
+      //       weight: {type: 'number'},
+      //     },
+      //     required: ['text', 'weight'],
+      //   },
+      // },
       domain: {type: 'array', items: {type: 'string'}},
       entity: {type: 'array', items: {type: 'string'}},
       action: {type: 'array', items: {type: 'string'}},
     },
-    required: ['contents', 'domain', 'entity', 'action'],
+    required: ['summary', 'domain', 'entity', 'action'],
   };
 
   async generateMessageContent(userId: string, questionContent: string, answerContent: string): Promise<MessageContentResult> {
@@ -103,11 +104,11 @@ export class SystemChatService {
       {role: 'user', content: dataText},
     ], undefined, this.messageContentSchema);
 
-    const {contents, domain, entity, action} = JSON.parse(raw) as MessageContentResult;
-    if (contents.length == 0) {
-      return {contents, domain: [], entity: [], action: []};
-    }
-    return {contents, domain, entity, action};
+    const {summary, contents, domain, entity, action} = JSON.parse(raw) as MessageContentResult;
+    // if (contents.length == 0) {
+    //   return {contents, domain: [], entity: [], action: []};
+    // }
+    return {summary, contents, domain, entity, action};
   }
 
 
@@ -115,7 +116,7 @@ export class SystemChatService {
 [지침]
 - 추출할 내용이 없으면 contents는 빈 배열을 반환한다.
 - 장기 기억으로 남길 만한 정보란 특정 주제에 대한 설명·사실·방법에 관한 정보를 말한다.
-- contents[i].text, summary, keywords[i].name은 반드시 [대화]에서 사용된 주요 언어와 동일한 언어로 작성한다.
+- contents[i].text, contents[i].domain, contents[i].entity, contents[i].action, summary, keywords[i].name은 반드시 [대화]에서 사용된 주요 언어와 동일한 언어로 작성한다.
 - keywords[i].code: 영문 소문자·숫자·하이픈 으로 작성한다. (예: rag-technique)
 
 1. 대화에서 장기 기억으로 남길 만한 정보를 재구성 한다.
@@ -127,9 +128,9 @@ export class SystemChatService {
   . 한 개의 문장만 할당한다.
 2-2. contents[i].text 에서 주제를 식별하는 핵심 키워드를 메타정보(domain, entity, action) 에 배열로 추출한다.
   . 키워드는 [대화]에 실제로 등장한 표현을 우선 사용한다.
-  . domain: 문장이 속한 상위 분야 2~3개
-  . entity: 문장의 핵심 대상·개념 1~7개
-  . action: entity에 대해 수행되거나 설명되는 핵심 행위 0~5개
+  . domain: 문장이 속한 상위 분야 최대 1개
+  . entity: 문장의 핵심 대상·개념 최대 3개
+  . action: entity에 대해 수행되거나 설명되는 핵심 행위 최대 2개
 2-3. 각 contents[i].text 문장마다 아래 점수를 0~1로 매긴다.
   . importance: 사용자 이해에 중요할수록 높음
   . durability: 시간이 지나도 유효할수록 높음 (날씨·일시적 감정 → 낮음, 직업·가치관·반복 패턴 → 높음)

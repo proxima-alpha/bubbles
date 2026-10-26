@@ -18,7 +18,7 @@ export class OllamaProvider {
     const res = await fetch(`${baseUrl}/api/embeddings`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({model: 'nomic-embed-text', prompt: text}),
+      body: JSON.stringify({model: 'nomic-embed-text-v2-moe', prompt: text}),
     });
     if (!res.ok) throw new Error(`Ollama embed error: ${res.status}`);
     const data = await res.json();
@@ -29,7 +29,7 @@ export class OllamaProvider {
     const res = await fetch(`${baseUrl}/api/embed`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({model: 'nomic-embed-text', input: texts}),
+      body: JSON.stringify({model: 'nomic-embed-text-v2-moe', input: texts}),
     });
     if (!res.ok) throw new Error(`Ollama embed error: ${res.status}`);
     const data = await res.json();

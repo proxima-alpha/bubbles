@@ -29,6 +29,7 @@ export interface MessageExchangeRow {
   role: string;
   provider: string | null;
   content: string;
+  summary: string | null;
   message_id: string;
   parent_message_id: string | null;
   label_domain: string[];
@@ -65,7 +66,8 @@ export class MessageRepository {
   async updateMessageEmbedding(messageId: string, vec: number[]) {
     return this.prisma.$executeRaw`
         UPDATE message
-        SET embedding = ${`[${vec.join(',')}]`}::vector
+        SET embedding = ${`[${vec.join(',')}]`}::vector,
+        is_labeled = true
         WHERE id = ${messageId}::uuid
     `;
   }
@@ -84,12 +86,15 @@ export class MessageRepository {
     );
   }
 
-  async updateMessageTopics(messageId: string, domain: string[], entity: string[], action: string[]) {
+  async updateLabeledMessage(messageId: string, summary: string, vec: number[], domain: string[], entity: string[], action: string[]) {
     await this.prisma.$executeRaw`
         UPDATE message
-        SET label_domain = ${domain}::text[],
+        SET embedding    = ${vec.length > 0 ? `[${vec.join(',')}]` : null}::vector,
+            summary      = ${summary},
+            label_domain = ${domain}::text[],
             label_entity = ${entity}::text[],
-            label_action = ${action}::text[]
+            label_action = ${action}::text[],
+            is_labeled   = true
         WHERE id = ${messageId}::uuid
     `;
   }
@@ -130,6 +135,7 @@ export class MessageRepository {
         role: 'assistant',
         parent_message_id: {not: null},
         is_proceeded: false,
+        is_labeled: false,
         message_contents: {none: {}},
       },
       include: {parent_message: true},
@@ -166,10 +172,12 @@ export class MessageRepository {
                m.label_entity,
                m.label_action,
                m.parent_message_id,
-               m.content
+               m.content,
+               m.summary
         FROM message m
         WHERE m.user_id = ${userId}::uuid
           AND m.is_proceeded = false
+          AND m.is_labeled = true
         ORDER BY m.created_at ASC
     `;
   }
